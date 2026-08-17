@@ -75,6 +75,7 @@ stream the other two read on their next turn.
 | --- | --- |
 | `main.js` | Mode selection, DOM wiring, dialogs |
 | `auth.js` | Accounts, session storage, token refresh |
+| `tasks.js` | The task list, workspace swapping, persistence |
 | `orchestrator.js` | Rounds, turns, tool loop, consensus, abort |
 | `agents.js` | The three roles, charters, shared rules, prompt assembly |
 | `thoughts.js` | The shared stream and its prompt rendering |
@@ -90,14 +91,43 @@ stream the other two read on their next turn.
 Only `main.js` and `ui.js` touch the DOM, which is why `vfs.js`, `shell.js` and
 `supabase.js` can be tested under plain Node in `tests/smoke.mjs`.
 
+## Tasks
+
+A task is a named brief plus its own workspace. There is one VFS, and switching
+tasks swaps what is in it: the outgoing workspace is snapshotted into the task
+record, the incoming one is restored over the top. The agents never learn about
+any of this — they always see whatever the VFS currently holds, which is why
+nothing in `orchestrator.js` or `tools.js` changed when tasks arrived.
+
+`tasks.js` is the *only* writer to storage. The VFS is deliberately memory-only:
+with one writer there is no way for a snapshot to land under the wrong task.
+A `change` on the VFS schedules a debounced save; an explicit switch, create or
+delete captures immediately and cancels the pending one.
+
+Two rules keep it honest:
+
+- **Switching is locked during a run.** Swapping the filesystem out from under
+  three agents mid-turn would corrupt whatever they were doing. The list is
+  `aria-disabled` and carries the reason as a tooltip — a disabled control
+  can't explain itself when clicked.
+- **Deleting the last task leaves a fresh empty one.** The studio always has
+  somewhere to put files, so no code path has to handle "no active task".
+
+Streams are per-task but held in memory only, keyed by task id in `main.js`.
+Switching back inside a session brings the discussion with it; a reload starts
+the log fresh. Persisting every stream would blow the `localStorage` budget
+that the workspaces themselves need.
+
+A pre-tasks deployment kept one workspace under `codefort.workspace.v1`; on
+first load that is imported as a task called "Imported workspace" and the old
+key removed.
+
 ## The virtual filesystem
 
 A flat `Map` of absolute path to node. Directories are stored explicitly, so an
 empty folder is a real thing an agent can create. Mutations dispatch a `change`
-event, which the UI listens to for the tree, editor and preview.
-
-The workspace is mirrored into `localStorage` on every change, so a reload
-picks up where the fort left off.
+event, which the UI listens to for the tree, editor and preview, and which
+`tasks.js` listens to for persistence.
 
 ## The shell
 
@@ -174,11 +204,28 @@ workspace into a single document:
 This is what makes a published site work inside a sandboxed iframe with an
 opaque origin, where a relative request would have nowhere to go.
 
-## Settings precedence
+## Settings
+
+Only four things are the visitor's to set: their own Mistral key, and the three
+run bounds (max rounds, tool steps per turn, temperature). Those are per-person
+— the key is theirs, and the bounds only ever cap their own spend.
+
+Everything else is the deployment's and comes from the repository secrets: the
+agent lineup and the Supabase project. Neither is offered as an input. The
+lineup is shown read-only in the dialog, because knowing which models are
+running is useful even when changing them is not on the table.
+
+`config.js` enforces this rather than relying on the absence of a form field.
+`getSettings()` reads `models`, `supabaseUrl` and `supabaseKey` only from the
+baked config, and `saveSettings()` filters every patch through a
+`USER_EDITABLE` allowlist, so a value hand-written into `localStorage` is
+ignored. A one-time prune drops the `models` and Supabase keys that older
+builds allowed, so they don't linger as a confusing artefact.
+
+For the Mistral key alone, precedence is:
 
 1. What the user typed into **Settings** (`localStorage`, that browser only)
-2. What the deploy workflow baked in from the repository secrets
-3. Built-in defaults
+2. What the deploy workflow baked in from `KEY_TOKEN`
 
-Saving a value identical to the baked-in one stores nothing, so a later deploy
+Saving a key identical to the baked-in one stores nothing, so a later deploy
 with a rotated secret takes effect instead of being shadowed by a stale copy.

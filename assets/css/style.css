@@ -214,6 +214,48 @@ code { font-family: var(--mono); font-size: 0.92em; }
 }
 .chk input { accent-color: var(--accent); margin: 0; }
 
+/* ------------------------------ task list ------------------------------ */
+
+.task-list {
+  max-height: 32%;
+  min-height: 74px;
+  overflow: auto;
+  padding: 5px 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.task-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.task-row:hover { background: var(--bg-3); }
+.task-row.active {
+  background: #1b2740;
+  border-left-color: var(--accent);
+}
+.task-row .task-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.task-row.active .task-name { color: #fff; font-weight: 600; }
+.task-row .task-meta {
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  flex: none;
+}
+.task-row .task-pub { color: var(--good); flex: none; font-size: 10.5px; }
+.task-list[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+
 /* ------------------------------ file tree ------------------------------ */
 
 .tree { flex: 1; overflow: auto; padding: 6px 4px; font-family: var(--mono); font-size: 12.5px; }
@@ -486,6 +528,20 @@ code { font-family: var(--mono); font-size: 0.92em; }
 }
 .field input:focus { border-color: var(--accent); }
 .field-row { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.readonly-list {
+  margin: 0;
+  padding: 9px 11px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  font-size: 12.5px;
+}
+.readonly-list dt { color: var(--fg-dim); }
+.readonly-list dd { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--fg); }
 
 .note {
   margin: 0;

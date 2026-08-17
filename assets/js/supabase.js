@@ -81,7 +81,7 @@ async function readError(res) {
  */
 export async function publish({ settings, session, files, name, title, description, entry = '/index.html' }) {
   if (!isConfigured(settings)) {
-    throw new PublishError('Supabase is not configured — set SUP_URL and SUP_PB (or fill them in under Settings).');
+    throw new PublishError('Supabase is not configured — set the SUP_URL and SUP_PB repository secrets and redeploy.');
   }
   if (!session?.access_token || !session.user?.id) {
     throw new PublishError('Publishing needs an account. Sign in and try again.');

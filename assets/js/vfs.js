@@ -2,11 +2,13 @@
  * vfs.js — the workspace the agents build in.
  *
  * A flat map of absolute path -> node. Directories are stored explicitly so
- * an empty folder is a real thing the agents can create. Everything is kept
- * in memory and mirrored to localStorage so a reload doesn't lose the fort.
+ * an empty folder is a real thing the agents can create.
+ *
+ * This is memory-only. Persistence belongs to tasks.js, which snapshots the
+ * VFS into whichever task is active — one writer, so a snapshot can never
+ * land under the wrong task.
  */
 
-const LS_KEY = 'codefort.workspace.v1';
 const TEXT_LIMIT = 512 * 1024; // per-file guard, keeps localStorage sane
 
 /** Collapse `a//b`, `./`, `../` and leading/trailing slashes into `/a/b`. */
@@ -49,7 +51,6 @@ export class VFS extends EventTarget {
 
   #changed(action, path, extra = {}) {
     this.dispatchEvent(new CustomEvent('change', { detail: { action, path, ...extra } }));
-    this.persist();
   }
 
   // ---------------------------------------------------------------- queries
@@ -261,39 +262,6 @@ export class VFS extends EventTarget {
   clear() {
     this.nodes = new Map([['/', { type: 'dir', mtime: Date.now() }]]);
     this.#changed('clear', '/');
-  }
-
-  persist() {
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify(this.snapshot()));
-    } catch {
-      /* over quota — in-memory workspace still works */
-    }
-  }
-
-  hydrate() {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (!raw) return false;
-      const snap = JSON.parse(raw);
-      if (!snap || !Object.keys(snap).length) return false;
-      for (const [p, content] of Object.entries(snap)) {
-        if (content === null || p.endsWith('/')) {
-          this.mkdir(p);
-          continue;
-        }
-        // Materialise the parents too — a snapshot only stores leaf paths, and
-        // a file whose directory node is missing is invisible to list()/tree().
-        const abs = normalize(p);
-        const parent = dirname(abs);
-        if (parent !== '/') this.mkdir(parent);
-        this.nodes.set(abs, { type: 'file', content, mtime: Date.now() });
-      }
-      this.dispatchEvent(new CustomEvent('change', { detail: { action: 'restore', path: '/' } }));
-      return true;
-    } catch {
-      return false;
-    }
   }
 }
 
