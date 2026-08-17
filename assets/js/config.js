@@ -11,10 +11,28 @@ const LS_KEY = 'codefort.settings.v1';
 
 const baked = (typeof window !== 'undefined' && window.__CODEFORT_CONFIG__) || {};
 
+/**
+ * The Supabase project CodeFort ships with.
+ *
+ * Committing these is deliberate, not an oversight. The publishable key is
+ * designed to be public — every Supabase browser client sends it on every
+ * request — and what protects the data is row-level security, not secrecy of
+ * the key (see supabase/schema.sql and docs/SECURITY.md).
+ *
+ * Building them in also means accounts keep working when config.generated.js
+ * is missing or stale, which has happened. The Mistral key gets no such
+ * treatment: that one is a real secret, and stays in KEY_TOKEN or in the
+ * visitor's own browser.
+ */
+const SUPABASE = {
+  url: 'https://rjwateigrdhcrldatlgp.supabase.co',
+  key: 'sb_publishable_FwiCcZEyhP0Qf1TwK8viyg_YSsJ5Wyf'
+};
+
 export const DEFAULTS = {
   mistralKey: '',
-  supabaseUrl: '',
-  supabaseKey: '',
+  supabaseUrl: SUPABASE.url,
+  supabaseKey: SUPABASE.key,
   models: {
     architect: 'mistral-large-latest',
     builder: 'mistral-medium-latest',
@@ -55,8 +73,10 @@ export function getSettings() {
     ...DEFAULTS,
     ...saved,
     mistralKey: saved.mistralKey || baked.mistralKey || '',
-    supabaseUrl: baked.supabaseUrl || '',
-    supabaseKey: baked.supabaseKey || '',
+    // A deploy can still point a fork at its own project via SUP_URL / SUP_PB;
+    // the built-in values are the fallback, not an override.
+    supabaseUrl: baked.supabaseUrl || SUPABASE.url,
+    supabaseKey: baked.supabaseKey || SUPABASE.key,
     models: { ...DEFAULTS.models }
   };
 }
@@ -99,7 +119,9 @@ pruneLegacy();
  */
 export function credentialSource(field = 'mistralKey') {
   if (field === 'mistralKey' && readStore().mistralKey) return 'browser';
-  return baked[field] ? 'deploy' : 'none';
+  if (baked[field]) return 'deploy';
+  if (field === 'supabaseUrl' || field === 'supabaseKey') return 'built-in';
+  return 'none';
 }
 
 /** Build metadata stamped in by the deploy workflow. */

@@ -71,6 +71,21 @@ the default here.
 Supabase browser client ships it. What protects the data is row-level
 security, not the secrecy of the key.
 
+That is why the project URL and publishable key are **committed** in
+`assets/js/config.js` rather than left to the secrets. Two reasons:
+
+1. They are public either way. Committing them exposes nothing that opening
+   the deployed site would not.
+2. Accounts keep working when `config.generated.js` is missing or stale — a
+   failure that has actually happened, and which otherwise takes the whole
+   sign-in screen down.
+
+`SUP_URL` and `SUP_PB` still override the built-ins when set, so a fork can
+point at its own project without editing code.
+
+The Mistral key gets no such treatment. It is a real secret: it stays in
+`KEY_TOKEN`, or in the visitor's own browser, and is never committed.
+
 [`supabase/schema.sql`](../supabase/schema.sql) sets policies so that through
 the public API:
 

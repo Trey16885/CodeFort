@@ -567,6 +567,16 @@ test('accounts are unavailable without Supabase', () => {
   assert.equal(new Auth(CONFIGURED).isConfigured(), true);
 });
 
+test('the built-in Supabase project stands in for a missing deploy config', async () => {
+  const { DEFAULTS } = await import('../assets/js/config.js');
+  assert.match(DEFAULTS.supabaseUrl, /^https:\/\/[a-z0-9]+\.supabase\.co$/,
+    'a real project URL is built in, so a stale config.generated.js cannot break sign-in');
+  assert.match(DEFAULTS.supabaseKey, /^sb_publishable_/,
+    'and it is the publishable key — never a service_role key, which would bypass RLS');
+  assert.equal(DEFAULTS.mistralKey, '',
+    'the Mistral key is a real secret and must NOT be built in');
+});
+
 await testAsync('credentials are validated before any network call', async () => {
   const auth = new Auth(CONFIGURED);
   await assert.rejects(() => auth.signUp('not-an-email', 'longenough'), /email address/);
