@@ -21,6 +21,19 @@ const SAVE_DEBOUNCE_MS = 400;
 const newId = () =>
   't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+/**
+ * Bring a stored task up to the current shape. Builds before unpublish kept a
+ * single `published` object; that becomes the first entry of `publications` so
+ * an already-live site can still be taken down.
+ */
+function migrate(task) {
+  if (!Array.isArray(task.publications)) {
+    task.publications = task.published?.slug ? [{ ...task.published }] : [];
+  }
+  delete task.published;
+  return task;
+}
+
 /** A brief like "build a pomodoro timer" becomes the name "Build a pomodoro timer". */
 export function nameFromBrief(brief, fallback = 'Untitled task') {
   const flat = String(brief || '').replace(/\s+/g, ' ').trim();
@@ -74,7 +87,7 @@ export class TaskStore extends EventTarget {
     }
 
     if (saved?.tasks?.length) {
-      this.tasks = saved.tasks.filter((t) => t && t.id);
+      this.tasks = saved.tasks.filter((t) => t && t.id).map(migrate);
       this.activeId = this.tasks.some((t) => t.id === saved.activeId)
         ? saved.activeId
         : this.tasks[0].id;
@@ -111,7 +124,7 @@ export class TaskStore extends EventTarget {
       name,
       brief: '',
       files,
-      published: null,
+      publications: [],
       createdAt: now,
       updatedAt: now
     };
@@ -202,13 +215,50 @@ export class TaskStore extends EventTarget {
     this.#emit();
   }
 
-  setPublished(info) {
+  /**
+   * Record a publication. Each publish mints a fresh slug, so a task can own
+   * several live sites; keeping them all is what makes unpublishing possible
+   * for anything but the most recent one.
+   */
+  addPublication(info) {
     const task = this.active;
-    if (!task) return;
-    task.published = info ? { url: info.url, slug: info.slug, at: Date.now() } : null;
+    if (!task || !info?.slug) return null;
+
+    const entry = {
+      slug: info.slug,
+      url: info.url,
+      name: info.name || null,
+      title: info.title || null,
+      at: Date.now()
+    };
+    task.publications = [entry, ...(task.publications || []).filter((p) => p.slug !== entry.slug)];
     task.updatedAt = Date.now();
     this.#save();
     this.#emit();
+    return entry;
+  }
+
+  /** Forget a publication locally. The server-side delete is supabase.unpublish. */
+  removePublication(slug) {
+    let found = null;
+    for (const task of this.tasks) {
+      const before = task.publications || [];
+      const after = before.filter((p) => p.slug !== slug);
+      if (after.length === before.length) continue;
+      found = task;
+      task.publications = after;
+      task.updatedAt = Date.now();
+    }
+    if (found) {
+      this.#save();
+      this.#emit();
+    }
+    return found;
+  }
+
+  /** Publications of the active task, newest first. */
+  publications() {
+    return [...(this.active?.publications || [])];
   }
 
   /* ---------------------------------------------------------- persistence */

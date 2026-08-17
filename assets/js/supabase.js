@@ -65,11 +65,45 @@ function restBase(settings) {
   return settings.supabaseUrl.replace(/\/+$/, '') + '/rest/v1';
 }
 
+/**
+ * Turn a PostgREST error into something with a next step in it.
+ *
+ * The raw messages are accurate but assume you know PostgREST: "Could not find
+ * the table 'public.publications' in the schema cache" is what you get when the
+ * schema was never applied, and it does not mention the file that would fix it.
+ */
+export function friendlyRestError(data, status) {
+  const code = data?.code || '';
+  const raw = String(data?.message || data?.hint || data?.error_description || '').trim();
+
+  // PGRST205: table missing. PGRST106: schema not exposed.
+  if (code === 'PGRST205' || /schema cache/i.test(raw)) {
+    return 'this deployment\'s database has no "publications" table yet — ' +
+           'run supabase/schema.sql in the Supabase SQL editor, then try again';
+  }
+  if (code === 'PGRST106') {
+    return 'the "public" schema is not exposed through the Supabase API — ' +
+           'enable it under Project Settings → API';
+  }
+  // 42501 is Postgres "insufficient privilege"; RLS refusals surface as 401/403.
+  if (code === '42501' || status === 401 || status === 403) {
+    return 'the database refused that — check you are signed in, and that the ' +
+           'row-level security policies from supabase/schema.sql are applied';
+  }
+  if (code === '23505') {
+    return 'that publication id is already taken — try again';
+  }
+  if (status === 404) {
+    return 'the Supabase REST endpoint was not found — check SUP_URL points at the right project';
+  }
+
+  return raw || `HTTP ${status}`;
+}
+
 async function readError(res) {
   const text = await res.text().catch(() => '');
   try {
-    const j = JSON.parse(text);
-    return j.message || j.hint || j.error_description || text;
+    return friendlyRestError(JSON.parse(text), res.status);
   } catch {
     return text || `HTTP ${res.status}`;
   }
@@ -110,7 +144,42 @@ export async function publish({ settings, session, files, name, title, descripti
 
   const rows = await res.json().catch(() => []);
   const slug = rows[0]?.slug || payload.slug;
-  return { slug, url: publicUrlFor(slug) };
+
+  // Return the name and title too: they are what distinguishes one publication
+  // of a task from another in the take-down list.
+  return { slug, url: publicUrlFor(slug), name: payload.name, title: payload.title };
+}
+
+/**
+ * Take a published site down.
+ *
+ * The delete policy is `user_id = auth.uid()`, so a row belonging to someone
+ * else simply matches nothing rather than erroring — which is indistinguishable
+ * from a row that was already deleted. `removed` reports which happened so the
+ * caller can say something true rather than claiming a success it didn't get.
+ *
+ * @returns {Promise<{slug: string, removed: boolean}>}
+ */
+export async function unpublish({ settings, session, slug }) {
+  if (!isConfigured(settings)) {
+    throw new PublishError('Supabase is not configured — set the SUP_URL and SUP_PB repository secrets and redeploy.');
+  }
+  if (!session?.access_token) {
+    throw new PublishError('Unpublishing needs an account. Sign in and try again.');
+  }
+  if (!/^[A-Za-z0-9_-]{4,64}$/.test(String(slug || ''))) {
+    throw new PublishError(`"${slug}" is not a valid publication id`);
+  }
+
+  const res = await fetch(`${restBase(settings)}/${TABLE}?slug=eq.${encodeURIComponent(slug)}`, {
+    method: 'DELETE',
+    headers: headers(settings, { token: session.access_token, Prefer: 'return=representation' })
+  });
+
+  if (!res.ok) throw new PublishError(`unpublish failed: ${await readError(res)}`);
+
+  const rows = await res.json().catch(() => []);
+  return { slug, removed: Array.isArray(rows) && rows.length > 0 };
 }
 
 /** Fetch a publication by slug. */

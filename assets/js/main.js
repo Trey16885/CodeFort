@@ -284,7 +284,7 @@ function startStudio() {
     ui.setStatus({ agent: outcomeLabel(e.detail.outcome) });
     ui.renderRoster(getSettings(), { verdicts });
     ui.renderPreview();
-    if (e.detail.published) tasks.setPublished(e.detail.published);
+    // announcePublication already recorded it via the toolbox's onPublish hook.
   });
 
   /* ------------------------------------------------------------ run / stop */
@@ -500,8 +500,85 @@ function startStudio() {
       result.hidden = false;
       result.textContent = 'Supabase is not configured. Set the SUP_URL and SUP_PB repository secrets and redeploy.';
     }
+    renderLivePublications();
     $('#dlg-publish').showModal();
   });
+
+  /** The list of this task's live sites, each with a way to take it down. */
+  function renderLivePublications() {
+    const list = $('#pub-live');
+    const wrap = $('#pub-live-wrap');
+    const entries = tasks.publications();
+
+    wrap.hidden = entries.length === 0;
+    list.innerHTML = '';
+
+    for (const entry of entries) {
+      const li = document.createElement('li');
+
+      const meta = document.createElement('div');
+      meta.className = 'pub-meta';
+
+      const link = document.createElement('a');
+      link.className = 'pub-url';
+      link.href = entry.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = entry.url;
+
+      const when = document.createElement('span');
+      when.className = 'pub-when';
+      when.textContent = [entry.title, entry.at ? new Date(entry.at).toLocaleString() : null]
+        .filter(Boolean).join(' · ');
+
+      meta.append(link, when);
+
+      const kill = document.createElement('button');
+      kill.type = 'button';
+      kill.className = 'btn danger sm';
+      kill.textContent = 'Unpublish';
+
+      kill.addEventListener('click', async () => {
+        if (!confirm(`Take down ${entry.url}?\n\nThe link stops working for everyone. This cannot be undone.`)) return;
+
+        kill.disabled = true;
+        li.classList.add('going');
+        kill.textContent = 'Taking down…';
+
+        try {
+          const { removed } = await supa.unpublish({
+            settings: getSettings(),
+            session: auth.session,
+            slug: entry.slug
+          });
+
+          tasks.removePublication(entry.slug);
+          li.classList.remove('going');
+          li.classList.add('gone');
+          kill.remove();
+          when.textContent = removed
+            ? 'taken down'
+            : 'already gone from the server — removed from this list';
+          ui.log(`unpublished ${entry.url}${removed ? '' : ' (was already gone)'}`, 'c-ok');
+          bus.post({ who: 'CodeFort', text: `Unpublished ${entry.url}` });
+
+          // Drop the row once the list is next drawn.
+          setTimeout(() => { if (!$('#dlg-publish').open) renderLivePublications(); }, 0);
+        } catch (err) {
+          li.classList.remove('going');
+          kill.disabled = false;
+          kill.textContent = 'Unpublish';
+          const result = $('#pub-result');
+          result.hidden = false;
+          result.textContent = err.message;
+          ui.log(err.message, 'c-err');
+        }
+      });
+
+      li.append(meta, kill);
+      list.appendChild(li);
+    }
+  }
 
   $('#dlg-publish').addEventListener('close', async (ev) => {
     if (ev.target.returnValue !== 'publish') return;
@@ -581,7 +658,7 @@ function announcePublication(ui, info) {
   }
   ui.log(`published: ${info.url}`, 'c-ok');
   bus.post({ who: 'CodeFort', text: `Published to ${info.url}` });
-  tasks.setPublished(info);
+  tasks.addPublication(info);
 }
 
 function replayStream(ui) {

@@ -424,16 +424,63 @@ test('renaming, briefs and publish state stick to their task', () => {
 
   store.rename(first, 'Renamed');
   store.setBrief('do the thing');
-  store.setPublished({ url: 'https://x/?=abc', slug: 'abc' });
+  store.addPublication({ url: 'https://x/?=abc123', slug: 'abc123' });
 
   store.create('Another');
   assert.equal(store.active.brief, '');
-  assert.equal(store.active.published, null);
+  assert.deepEqual(store.publications(), []);
 
   store.switchTo(first);
   assert.equal(store.active.name, 'Renamed');
   assert.equal(store.active.brief, 'do the thing');
-  assert.equal(store.active.published.slug, 'abc');
+  assert.equal(store.publications()[0].slug, 'abc123');
+});
+
+test('a task keeps every publication, newest first', () => {
+  const store = new TaskStore();
+  store.hydrate();
+
+  store.addPublication({ url: 'https://x/?=aaa111', slug: 'aaa111' });
+  store.addPublication({ url: 'https://x/?=bbb222', slug: 'bbb222' });
+
+  assert.deepEqual(store.publications().map((p) => p.slug), ['bbb222', 'aaa111']);
+});
+
+test('re-publishing the same slug does not duplicate it', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  store.addPublication({ url: 'https://x/?=aaa111', slug: 'aaa111' });
+  store.addPublication({ url: 'https://x/?=aaa111', slug: 'aaa111', title: 'again' });
+
+  assert.equal(store.publications().length, 1);
+  assert.equal(store.publications()[0].title, 'again');
+});
+
+test('removePublication drops just that one', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  store.addPublication({ url: 'https://x/?=aaa111', slug: 'aaa111' });
+  store.addPublication({ url: 'https://x/?=bbb222', slug: 'bbb222' });
+
+  store.removePublication('aaa111');
+  assert.deepEqual(store.publications().map((p) => p.slug), ['bbb222']);
+
+  assert.equal(store.removePublication('nosuch'), null, 'unknown slug is a no-op');
+  assert.equal(store.publications().length, 1);
+});
+
+test('a publication can be removed from a task that is not active', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  const first = store.activeId;
+  store.addPublication({ url: 'https://x/?=aaa111', slug: 'aaa111' });
+
+  store.create('Other');
+  assert.equal(store.activeId !== first, true);
+
+  const owner = store.removePublication('aaa111');
+  assert.equal(owner.id, first);
+  assert.equal(store.tasks.find((t) => t.id === first).publications.length, 0);
 });
 
 test('a default-named task is renamed by its first brief', () => {
@@ -538,6 +585,144 @@ await testAsync('publishing refuses without a session', async () => {
     () => publish({ settings: CONFIGURED(), session: null, files: { '/a.html': 'x' }, name: 'me' }),
     /needs an account/
   );
+});
+
+/* --------------------------------------------------------------- unpublish */
+
+console.log('\nunpublish');
+
+const SESSION = { access_token: 'tok', user: { id: 'uid-1', email: 'a@b.co' } };
+
+await testAsync('unpublishing refuses without a session or Supabase', async () => {
+  const { unpublish } = await import('../assets/js/supabase.js');
+  await assert.rejects(
+    () => unpublish({ settings: CONFIGURED(), session: null, slug: 'abc123' }),
+    /needs an account/
+  );
+  await assert.rejects(
+    () => unpublish({ settings: { supabaseUrl: '', supabaseKey: '' }, session: SESSION, slug: 'abc123' }),
+    /not configured/
+  );
+});
+
+await testAsync('a malformed slug never reaches the network', async () => {
+  const { unpublish } = await import('../assets/js/supabase.js');
+  let called = false;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { called = true; return new Response('[]'); };
+  try {
+    await assert.rejects(
+      () => unpublish({ settings: CONFIGURED(), session: SESSION, slug: '../../etc/passwd' }),
+      /not a valid publication id/
+    );
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('unpublish sends an authenticated, slug-scoped DELETE', async () => {
+  const { unpublish } = await import('../assets/js/supabase.js');
+  let seen = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify([{ slug: 'abc123' }]), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  try {
+    const result = await unpublish({ settings: CONFIGURED(), session: SESSION, slug: 'abc123' });
+    assert.equal(result.removed, true);
+    assert.equal(seen.init.method, 'DELETE');
+    assert.match(seen.url, /\/rest\/v1\/publications\?slug=eq\.abc123$/);
+    assert.equal(seen.init.headers.Authorization, 'Bearer tok', 'must use the user token, not the anon key');
+    assert.equal(seen.init.headers.apikey, 'anon-key');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('deleting nothing reports removed:false rather than claiming success', async () => {
+  const { unpublish } = await import('../assets/js/supabase.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('[]', {
+    status: 200, headers: { 'Content-Type': 'application/json' }
+  });
+  try {
+    const result = await unpublish({ settings: CONFIGURED(), session: SESSION, slug: 'abc123' });
+    assert.equal(result.removed, false);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('PostgREST errors name the fix, not just the symptom', async () => {
+  const { friendlyRestError } = await import('../assets/js/supabase.js');
+
+  // The exact shape PostgREST returns when the schema was never applied.
+  assert.match(
+    friendlyRestError({
+      code: 'PGRST205',
+      message: "Could not find the table 'public.publications' in the schema cache"
+    }, 404),
+    /run supabase\/schema\.sql/
+  );
+  assert.match(friendlyRestError({ code: 'PGRST106' }, 406), /public. schema is not exposed/);
+  assert.match(friendlyRestError({ code: '42501' }, 403), /row-level security/);
+  assert.match(friendlyRestError({}, 403), /row-level security/);
+  assert.match(friendlyRestError({ code: '23505' }, 409), /already taken/);
+  assert.match(friendlyRestError({ message: 'something odd' }, 500), /something odd/);
+  assert.match(friendlyRestError({}, 500), /HTTP 500/);
+});
+
+await testAsync('a publish against a missing table explains itself', async () => {
+  const { publish } = await import('../assets/js/supabase.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    code: 'PGRST205',
+    message: "Could not find the table 'public.publications' in the schema cache"
+  }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+  try {
+    await assert.rejects(
+      () => publish({ settings: CONFIGURED(), session: SESSION, files: { '/a.html': 'x' }, name: 'me' }),
+      /run supabase\/schema\.sql/
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('a refused delete points at the RLS policies', async () => {
+  const { unpublish } = await import('../assets/js/supabase.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'permission denied' }), {
+    status: 403, headers: { 'Content-Type': 'application/json' }
+  });
+  try {
+    await assert.rejects(
+      () => unpublish({ settings: CONFIGURED(), session: SESSION, slug: 'abc123' }),
+      /unpublish failed: .*row-level security/
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('an unrecognised server error passes its message through', async () => {
+  const { unpublish } = await import('../assets/js/supabase.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'deadlock detected' }), {
+    status: 500, headers: { 'Content-Type': 'application/json' }
+  });
+  try {
+    await assert.rejects(
+      () => unpublish({ settings: CONFIGURED(), session: SESSION, slug: 'abc123' }),
+      /unpublish failed: deadlock detected/
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 /* ------------------------------------------------------------------- done */

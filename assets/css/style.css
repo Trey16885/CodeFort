@@ -557,6 +557,46 @@ code { font-family: var(--mono); font-size: 0.92em; }
 
 .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 0; }
 
+.pub-live-head {
+  margin: 0 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--fg-dim);
+}
+.pub-live {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+}
+.pub-live li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pub-live .pub-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pub-live .pub-url {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pub-live .pub-when { font-size: 10.5px; color: var(--fg-faint); }
+.pub-live li.going { opacity: .5; }
+.pub-live li.gone { border-color: #1e4433; background: #0f2419; }
+
 /* ------------------------------ gate ------------------------------ */
 
 .gate {
