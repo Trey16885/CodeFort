@@ -35,14 +35,31 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: node scripts/build-config.mjs
 
+      # Evaluate the generated file rather than pattern-matching its source:
+      # the emitted JSON quotes its keys, so a regex written against the
+      # committed placeholder's unquoted style reports EMPTY for everything.
       - name: Report what was injected
         run: |
           node -e '
-            const s = require("fs").readFileSync("assets/js/config.generated.js","utf8");
-            const has = (k) => new RegExp(`${k}: "[^"]+"`).test(s) ? "set" : "EMPTY";
-            console.log("mistralKey :", has("mistralKey"));
-            console.log("supabaseUrl:", has("supabaseUrl"));
-            console.log("supabaseKey:", has("supabaseKey"));
+            const vm = require("node:vm");
+            const src = require("fs").readFileSync("assets/js/config.generated.js", "utf8");
+            const ctx = { window: {} };
+            vm.createContext(ctx);
+            vm.runInContext(src, ctx);
+
+            const config = ctx.window.__CODEFORT_CONFIG__ || {};
+            const state = (v) => (v ? `set (${String(v).length} chars)` : "EMPTY");
+            for (const k of ["mistralKey", "supabaseUrl", "supabaseKey"]) {
+              console.log(k.padEnd(12), state(config[k]));
+            }
+
+            // builtAt is stamped unconditionally, so an empty one means the
+            // placeholder survived and no secret would reach the deployed site.
+            if (!config.builtAt) {
+              console.error("::error::config.generated.js was not regenerated - the placeholder would ship");
+              process.exit(1);
+            }
+            console.log("built", config.builtAt, "from", (config.commit || "").slice(0, 7));
           '
 
       - uses: actions/configure-pages@v5
