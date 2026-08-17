@@ -1,0 +1,112 @@
+# Security notes
+
+## The Mistral key is public once you deploy it
+
+CodeFort is a static site. There is no server between the visitor and the
+Mistral API, so the API key has to reach the browser to be used at all. The
+deploy workflow writes `KEY_TOKEN` into `assets/js/config.generated.js`, which
+is served to every visitor of the Pages site.
+
+That means:
+
+- Anyone who opens the site can read the key from the page source or the
+  network tab. Obfuscation does not change this — the browser needs the real
+  value to send the request.
+- Anyone who reads it can spend against your Mistral account from anywhere,
+  not just from CodeFort.
+
+This is a deliberate trade-off of the "static site with repo secrets" design,
+not a bug. Deploy that way only with a key you are willing to treat as public.
+
+### How to keep the spend bounded
+
+1. **Use a dedicated key.** Create a Mistral key used by nothing else, so
+   rotating it breaks nothing but CodeFort.
+2. **Cap it.** Set the lowest spend limit on that key that still lets the fort
+   work, in the Mistral console.
+3. **Rotate on a schedule.** Update the `KEY_TOKEN` secret and re-run the
+   deploy; the new value ships with the next build.
+4. **Watch usage.** A key on a public page is found by scanners quickly. Treat
+   an unexplained jump as a compromise and rotate.
+
+### The alternative: don't ship a key at all
+
+Leave `KEY_TOKEN` unset. The workflow warns and deploys with an empty key, the
+site loads normally, and each visitor supplies their own key under
+**Settings** — stored in their own browser's `localStorage`, never sent
+anywhere but `api.mistral.ai`. Everything except the agent loop (workspace,
+editor, shell, Python, preview) works with no key at all.
+
+This is the right default for a fort that other people will visit. Ship a key
+only when the site is effectively for you.
+
+### If you want a shared key without exposing it
+
+You need something in front of the API that holds the key: a Supabase Edge
+Function, a Cloudflare Worker, a small server. Point CodeFort's endpoint at
+that proxy, have the proxy attach the key and enforce whatever rate limit or
+auth you want. That stops being a purely static site, which is why it isn't
+the default here.
+
+## The Supabase key is a different case
+
+`SUP_PB` is the publishable (anon) key. It is *designed* to be public — every
+Supabase browser client ships it. What protects the data is row-level
+security, not the secrecy of the key.
+
+[`supabase/schema.sql`](../supabase/schema.sql) sets policies so that through
+the public API:
+
+- anyone may **read** a publication (that's what publishing means),
+- anyone may **insert** one,
+- **nobody** may update or delete. Publications are immutable once written, so
+  a stranger cannot rewrite or remove someone else's published site.
+
+Never put the `service_role` key in `SUP_PB`, or in any repository secret this
+workflow reads. It bypasses row-level security entirely.
+
+### Abuse surface on publishing
+
+Insert is open to the world, which means anyone who finds the endpoint can
+write rows. The schema limits the damage:
+
+- a size check caps one publication at ~2 MB,
+- the slug format is constrained,
+- name, title and description have length limits.
+
+If that isn't enough for your deployment, the options are a Supabase Edge
+Function that gates inserts, or turning the insert policy off and publishing
+from a trusted context only. There is also a commented `pg_cron` job in the
+schema that expires old publications.
+
+## Published sites run as untrusted code
+
+A published workspace is other people's HTML, CSS and JavaScript. CodeFort
+renders it inside an iframe with `sandbox="allow-scripts allow-forms
+allow-modals allow-popups"` and **no** `allow-same-origin`, so the page:
+
+- gets a unique opaque origin,
+- cannot read the parent document, its `localStorage`, or your Mistral key,
+- cannot make same-origin requests back to the CodeFort deployment.
+
+`allow-scripts` without `allow-same-origin` is the combination that matters —
+together they would let sandboxed code remove its own sandbox.
+
+The bundler inlines every local reference into the document (styles into
+`<style>`, scripts inline, other assets as `data:` URLs) so that a published
+site never depends on files fetched from the CodeFort origin.
+
+## Agent tools are scoped to the workspace
+
+Everything the models can touch lives in the in-memory virtual filesystem:
+
+- there is no access to the real disk — the "filesystem" is a `Map` in a tab,
+- `run_shell` is an interpreter written for this app, not a spawned process,
+- `run_python` runs in Pyodide's WebAssembly sandbox with only `/work` mounted,
+  and `/work` is rebuilt from the workspace before every run,
+- `publish_site` is the only tool that reaches the network, and it writes to
+  exactly one table.
+
+The realistic risks are spend (a loop that burns tokens — bounded by
+**Max rounds** and **Tool steps / turn**) and nonsense output, not host
+compromise.

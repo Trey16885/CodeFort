@@ -1,0 +1,14 @@
+{
+  "name": "codefort",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A web coding agent where three Mistral models work the same task together.",
+  "type": "module",
+  "scripts": {
+    "test": "node tests/smoke.mjs",
+    "check": "node --check assets/js/main.js",
+    "config": "node scripts/build-config.mjs",
+    "serve": "python3 -m http.server 8080"
+  },
+  "license": "MIT"
+}
