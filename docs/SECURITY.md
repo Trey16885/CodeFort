@@ -18,6 +18,23 @@ That means:
 This is a deliberate trade-off of the "static site with repo secrets" design,
 not a bug. Deploy that way only with a key you are willing to treat as public.
 
+### The account gate does not protect the key
+
+Requiring sign-up gates the *studio*, not the *files*. `config.generated.js` is
+a static asset on the Pages site: anyone can fetch it directly, without an
+account, without ever loading the app.
+
+```
+curl https://<user>.github.io/CodeFort/assets/js/config.generated.js
+```
+
+That returns the key. There is no arrangement of front-end code that changes
+this, because GitHub Pages serves files to whoever asks.
+
+So accounts are worth having — they stop strangers spending your Mistral quota
+through the UI, and they give publishing a real owner — but they are not a
+reason to relax about a baked-in key. Everything below still applies.
+
 ### How to keep the spend bounded
 
 1. **Use a dedicated key.** Create a Mistral key used by nothing else, so
@@ -57,27 +74,43 @@ security, not the secrecy of the key.
 [`supabase/schema.sql`](../supabase/schema.sql) sets policies so that through
 the public API:
 
-- anyone may **read** a publication (that's what publishing means),
-- anyone may **insert** one,
-- **nobody** may update or delete. Publications are immutable once written, so
-  a stranger cannot rewrite or remove someone else's published site.
+- anyone may **read** a publication, signed in or not — that's what publishing
+  means, and it's why a `?=<slug>` link needs no account,
+- only an **authenticated** account may insert, and only with its own
+  `user_id`, so nobody can publish in someone else's name,
+- **nobody** may update. Publications are immutable once written, so a stranger
+  cannot rewrite someone else's published site,
+- an account may **delete** its own publications, and only its own.
 
 Never put the `service_role` key in `SUP_PB`, or in any repository secret this
 workflow reads. It bypasses row-level security entirely.
 
 ### Abuse surface on publishing
 
-Insert is open to the world, which means anyone who finds the endpoint can
-write rows. The schema limits the damage:
+Requiring an account is what bounds this. Before accounts, insert was open to
+anyone who found the endpoint; now a writer needs a confirmed email and every
+row is attributable. The schema limits the rest:
 
 - a size check caps one publication at ~2 MB,
 - the slug format is constrained,
 - name, title and description have length limits.
 
-If that isn't enough for your deployment, the options are a Supabase Edge
-Function that gates inserts, or turning the insert policy off and publishing
-from a trusted context only. There is also a commented `pg_cron` job in the
-schema that expires old publications.
+What's left is a determined person creating accounts to spam rows. If that
+matters for your deployment, Supabase's own rate limits and CAPTCHA protection
+(**Authentication → Rate Limits / Attack Protection**) are the right lever, and
+there's a commented `pg_cron` job in the schema that expires old publications.
+
+### Passwords
+
+CodeFort never sees a password beyond passing it to `/auth/v1`. There is no
+password storage, hashing or comparison in this codebase — Supabase Auth owns
+all of it. The app enforces a minimum length of 8 before making the request,
+which is a courtesy check, not the security boundary; set the real policy in
+the Supabase dashboard.
+
+The session in `localStorage` is a bearer token. Anything that can run script
+on the CodeFort origin can read it — which is the other reason published sites
+render in a sandboxed iframe with no same-origin access.
 
 ## Published sites run as untrusted code
 

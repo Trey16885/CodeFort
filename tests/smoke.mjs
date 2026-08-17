@@ -13,6 +13,7 @@ import { VFS, normalize, dirname, basename } from '../assets/js/vfs.js';
 import { Shell, tokenize, tokenizeWords } from '../assets/js/shell.js';
 import { vfs } from '../assets/js/vfs.js';
 import { bundleToHtml, makeSlug, slugFromLocation } from '../assets/js/supabase.js';
+import { Auth, toSession, friendlyError } from '../assets/js/auth.js';
 
 let passed = 0;
 let failed = 0;
@@ -329,6 +330,86 @@ test('bundler falls back when there is no entry point', () => {
 test('bundler finds a non-root index.html', () => {
   const html = bundleToHtml({ '/site/index.html': '<p>nested</p>' });
   assert.match(html, /nested/);
+});
+
+/* ---------------------------------------------------------------- accounts */
+
+console.log('\naccounts');
+
+const CONFIGURED = () => ({ supabaseUrl: 'https://demo.supabase.co', supabaseKey: 'anon-key' });
+
+test('a session is read from either GoTrue response shape', () => {
+  const flat = toSession({
+    access_token: 'a', refresh_token: 'r', expires_in: 3600,
+    user: { id: 'u1', email: 'a@b.co' }
+  });
+  assert.equal(flat.access_token, 'a');
+  assert.equal(flat.user.email, 'a@b.co');
+  assert.ok(flat.expires_at > Date.now());
+
+  const nested = toSession({
+    session: { access_token: 'a', refresh_token: 'r', expires_in: 60 },
+    user: { id: 'u1', email: 'a@b.co' }
+  });
+  assert.equal(nested.access_token, 'a');
+  assert.equal(nested.user.id, 'u1');
+});
+
+test('signup awaiting confirmation yields no session', () => {
+  assert.equal(toSession({ id: 'u1', email: 'a@b.co', confirmation_sent_at: 'now' }), null);
+  assert.equal(toSession({}), null);
+  assert.equal(toSession(null), null);
+});
+
+test('an absolute expires_at is preferred over expires_in', () => {
+  const at = Math.floor(Date.now() / 1000) + 1000;
+  const s = toSession({ access_token: 'a', expires_at: at, expires_in: 5 });
+  assert.equal(s.expires_at, at * 1000);
+});
+
+test('GoTrue errors become one actionable sentence', () => {
+  assert.match(friendlyError({ error_description: 'Invalid login credentials' }, 400), /Wrong email or password/);
+  assert.match(friendlyError({ msg: 'User already registered' }, 422), /already has an account/);
+  assert.match(friendlyError({ message: 'Email not confirmed' }, 400), /Confirm your email/);
+  assert.match(friendlyError({}, 429), /Too many attempts/);
+  assert.match(friendlyError({}, 500), /HTTP 500/);
+});
+
+test('signed-in requires a token that has not expired', () => {
+  const auth = new Auth(CONFIGURED);
+  assert.equal(auth.isSignedIn(), false);
+
+  auth.session = { access_token: 'a', expires_at: Date.now() + 60_000, user: { id: 'u' } };
+  assert.equal(auth.isSignedIn(), true);
+
+  auth.session = { access_token: 'a', expires_at: Date.now() - 1, user: { id: 'u' } };
+  assert.equal(auth.isSignedIn(), false);
+});
+
+test('accounts are unavailable without Supabase', () => {
+  const auth = new Auth(() => ({ supabaseUrl: '', supabaseKey: '' }));
+  assert.equal(auth.isConfigured(), false);
+  assert.equal(new Auth(CONFIGURED).isConfigured(), true);
+});
+
+await testAsync('credentials are validated before any network call', async () => {
+  const auth = new Auth(CONFIGURED);
+  await assert.rejects(() => auth.signUp('not-an-email', 'longenough'), /email address/);
+  await assert.rejects(() => auth.signUp('a@b.co', 'short'), /at least 8 characters/);
+  await assert.rejects(() => auth.signIn('', 'longenough'), /email address/);
+});
+
+await testAsync('unconfigured signup explains itself instead of throwing a URL error', async () => {
+  const auth = new Auth(() => ({ supabaseUrl: '', supabaseKey: '' }));
+  await assert.rejects(() => auth.signUp('a@b.co', 'longenough'), /no Supabase configured/);
+});
+
+await testAsync('publishing refuses without a session', async () => {
+  const { publish } = await import('../assets/js/supabase.js');
+  await assert.rejects(
+    () => publish({ settings: CONFIGURED(), session: null, files: { '/a.html': 'x' }, name: 'me' }),
+    /needs an account/
+  );
 });
 
 /* ------------------------------------------------------------------- done */

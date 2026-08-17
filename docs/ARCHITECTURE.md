@@ -4,14 +4,18 @@ CodeFort is a static site with no build step. `index.html` loads one generated
 config script and one ES module; everything else is imported from there. The
 whole thing runs in the tab.
 
-## Two modes, one page
+## Three modes, one page
 
-`main.js` looks at the URL first:
+`main.js` looks at the URL, then at the session:
 
-| URL | Mode |
+| URL / state | Mode |
 | --- | --- |
-| `/CodeFort/` | **Studio** — the agent workbench |
-| `/CodeFort/?=k7m2xq9d4npv` | **Viewer** — renders that published workspace |
+| `/CodeFort/?=k7m2xq9d4npv` | **Viewer** — renders that published workspace, no account |
+| `/CodeFort/`, signed out | **Gate** — create an account or sign in |
+| `/CodeFort/`, signed in | **Studio** — the agent workbench |
+
+The viewer is checked first and deliberately skips the gate. Publishing that
+produced a link only account holders could open would not be publishing.
 
 `?=slug` is a query string whose key is the empty string, which
 `URLSearchParams.get('')` reads directly. `?p=slug`, `?site=slug` and `#slug`
@@ -70,6 +74,7 @@ stream the other two read on their next turn.
 | Module | Responsibility |
 | --- | --- |
 | `main.js` | Mode selection, DOM wiring, dialogs |
+| `auth.js` | Accounts, session storage, token refresh |
 | `orchestrator.js` | Rounds, turns, tool loop, consensus, abort |
 | `agents.js` | The three roles, charters, shared rules, prompt assembly |
 | `thoughts.js` | The shared stream and its prompt rendering |
@@ -126,12 +131,37 @@ per session) and is reused after. Around each run:
 Set `window.__CODEFORT_PYODIDE_URL__` before the modules load to self-host the
 runtime instead of using the CDN.
 
+## Accounts
+
+Supabase Auth (GoTrue) over plain fetch — `/auth/v1/signup`, `/token`,
+`/logout`, `/recover`. No SDK, in keeping with the rest.
+
+The session — access token, refresh token, absolute expiry, user id and email —
+lives in `localStorage` under `codefort.session.v1`. On boot, `Auth.restore()`
+either finds a live session, silently refreshes an expired one, or gives up and
+hands over to the gate. While the studio is open a timer refreshes the token a
+minute before it expires.
+
+Sign-out and a refresh that stops working are the same event: the session goes
+to `null`, `Auth` dispatches `change`, and `main.js` reloads the page back to
+the gate. That is why the gate's listeners are only ever attached once.
+
+GoTrue returns a session at the top level for `/token` but nested under
+`session` in some signup responses, and returns *no* session at all when the
+project requires email confirmation. `toSession()` normalises all three, and a
+null result is what tells the gate to say "check your inbox" instead of
+dropping the user into the studio.
+
 ## Publishing
 
-`publish_site` writes one row: `{slug, name, title, description, entry, files}`,
-where `files` is the workspace snapshot as `{path: content}`. The slug is 12
-random characters from a 33-character alphabet with the ambiguous glyphs
-removed.
+`publish_site` writes one row: `{slug, user_id, name, title, description,
+entry, files}`, where `files` is the workspace snapshot as `{path: content}`.
+The slug is 12 random characters from a 33-character alphabet with the
+ambiguous glyphs removed.
+
+The insert is authenticated with the user's access token rather than the anon
+key, so row-level security sees a real `auth.uid()` and can require that a row's
+`user_id` matches the account writing it. Reads stay anonymous.
 
 The viewer fetches the row and calls `bundleToHtml()`, which folds the whole
 workspace into a single document:

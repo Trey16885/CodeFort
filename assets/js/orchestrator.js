@@ -17,10 +17,10 @@ import { TOOL_DEFS, Toolbox } from './tools.js';
 import { vfs } from './vfs.js';
 
 export class Orchestrator extends EventTarget {
-  constructor({ getSettings, log, onPublish }) {
+  constructor({ getSettings, getSession, log, onPublish }) {
     super();
     this.getSettings = getSettings;
-    this.toolbox = new Toolbox({ getSettings, log, onPublish });
+    this.toolbox = new Toolbox({ getSettings, getSession, log, onPublish });
     this.running = false;
     this.controller = null;
     this.round = 0;

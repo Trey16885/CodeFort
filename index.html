@@ -28,6 +28,49 @@
   <pre id="viewer-code" class="viewer-code" hidden></pre>
 </div>
 
+<!-- ============================ GATE (SIGN IN) ============================ -->
+<div id="gate" class="gate" hidden>
+  <div class="gate-card">
+    <div class="gate-brand">🏰 <span>CodeFort</span></div>
+    <p class="gate-lede">
+      Three Mistral models plan, build and verify in one shared workspace.
+      Make an account to open the fort.
+    </p>
+
+    <div class="gate-tabs" role="tablist">
+      <button class="gate-tab active" data-mode="signup" role="tab" type="button">Create account</button>
+      <button class="gate-tab" data-mode="signin" role="tab" type="button">Sign in</button>
+    </div>
+
+    <form id="gate-form" novalidate>
+      <label class="field">
+        <span>Email</span>
+        <input id="gate-email" type="email" autocomplete="email" required placeholder="you@example.com" />
+      </label>
+
+      <label class="field">
+        <span>Password</span>
+        <input id="gate-password" type="password" required minlength="8"
+               autocomplete="new-password" placeholder="at least 8 characters" />
+      </label>
+
+      <p id="gate-message" class="gate-message" hidden></p>
+
+      <button id="gate-submit" class="btn primary gate-submit" type="submit">Create account</button>
+
+      <div class="gate-foot">
+        <button id="gate-forgot" class="linklike" type="button">Forgot password?</button>
+        <span id="gate-swap-hint" class="muted">Already have one? <button class="linklike" data-mode="signin" type="button">Sign in</button></span>
+      </div>
+    </form>
+
+    <p class="gate-note">
+      Your email and password go to this deployment's Supabase project and nowhere else.
+      Published sites stay public — no account needed to open a <code>?=…</code> link.
+    </p>
+  </div>
+</div>
+
 <!-- ============================ STUDIO MODE ============================ -->
 <div id="studio" class="app" hidden>
 
@@ -38,8 +81,10 @@
 
     <div class="topbar-actions">
       <span id="key-state" class="pill warn" title="API key status">no key</span>
+      <span id="account" class="pill" title="Signed in as"></span>
       <button id="btn-settings" class="btn ghost" type="button">Settings</button>
       <button id="btn-publish" class="btn ghost" type="button">Publish</button>
+      <button id="btn-signout" class="btn ghost" type="button">Sign out</button>
       <button id="btn-stop" class="btn danger" type="button" disabled>Stop</button>
     </div>
   </header>

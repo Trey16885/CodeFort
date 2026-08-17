@@ -86,6 +86,7 @@ export class Toolbox {
   /**
    * @param {object} ctx
    * @param {() => object} ctx.getSettings
+   * @param {() => object|null} [ctx.getSession]  the signed-in account
    * @param {(line: string, cls?: string) => void} ctx.log  console sink
    * @param {(info: object) => void} [ctx.onPublish]
    */
@@ -211,6 +212,7 @@ export class Toolbox {
 
     const result = await supa.publish({
       settings,
+      session: this.ctx.getSession?.(),
       files,
       name: name || agent?.name || 'CodeFort',
       title,
