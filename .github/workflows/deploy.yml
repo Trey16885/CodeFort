@@ -1,0 +1,62 @@
+name: Deploy CodeFort to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let a run in progress finish rather than cancelling it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check syntax of every module
+        run: |
+          for f in assets/js/*.js; do
+            node --check "$f"
+          done
+
+      - name: Inject repository secrets into config.generated.js
+        env:
+          KEY_TOKEN: ${{ secrets.KEY_TOKEN }}
+          SUP_URL: ${{ secrets.SUP_URL }}
+          SUP_PB: ${{ secrets.SUP_PB }}
+          COMMIT: ${{ github.sha }}
+        run: node scripts/build-config.mjs
+
+      - name: Report what was injected
+        run: |
+          node -e '
+            const s = require("fs").readFileSync("assets/js/config.generated.js","utf8");
+            const has = (k) => new RegExp(`${k}: "[^"]+"`).test(s) ? "set" : "EMPTY";
+            console.log("mistralKey :", has("mistralKey"));
+            console.log("supabaseUrl:", has("supabaseUrl"));
+            console.log("supabaseKey:", has("supabaseKey"));
+          '
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

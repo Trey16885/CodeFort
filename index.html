@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CodeFort — Multi-Model Web Coding Agent</title>
+<meta name="description" content="CodeFort is a web coding agent where multiple Mistral models work together, share their thought processes, edit files, run Python and shell, and publish the result." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='52'%3E%F0%9F%8F%B0%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="./assets/css/style.css" />
+<script src="./assets/js/config.generated.js"></script>
+</head>
+<body>
+
+<!-- ============================ VIEWER MODE ============================ -->
+<div id="viewer" class="viewer" hidden>
+  <header class="viewer-bar">
+    <a class="brand" href="./">🏰 <span>CodeFort</span></a>
+    <div class="viewer-meta">
+      <strong id="viewer-title">Loading…</strong>
+      <span id="viewer-byline" class="muted"></span>
+    </div>
+    <div class="viewer-actions">
+      <button id="viewer-source" class="btn ghost" type="button">View source</button>
+      <a class="btn" href="./">Open CodeFort</a>
+    </div>
+  </header>
+  <iframe id="viewer-frame" title="Published project" sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>
+  <pre id="viewer-code" class="viewer-code" hidden></pre>
+</div>
+
+<!-- ============================ STUDIO MODE ============================ -->
+<div id="studio" class="app" hidden>
+
+  <header class="topbar">
+    <div class="brand">🏰 <span>CodeFort</span></div>
+
+    <div id="roster" class="roster" aria-label="Agent roster"></div>
+
+    <div class="topbar-actions">
+      <span id="key-state" class="pill warn" title="API key status">no key</span>
+      <button id="btn-settings" class="btn ghost" type="button">Settings</button>
+      <button id="btn-publish" class="btn ghost" type="button">Publish</button>
+      <button id="btn-stop" class="btn danger" type="button" disabled>Stop</button>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <!-- ---------- left: files ---------- -->
+    <section class="panel files">
+      <div class="panel-head">
+        <h2>Workspace</h2>
+        <div class="panel-head-actions">
+          <button id="btn-new-file" class="icon-btn" type="button" title="New file">＋</button>
+          <button id="btn-new-folder" class="icon-btn" type="button" title="New folder">🗀</button>
+          <button id="btn-reset" class="icon-btn" type="button" title="Reset workspace">⟲</button>
+        </div>
+      </div>
+      <div id="tree" class="tree" role="tree"></div>
+      <div class="panel-foot">
+        <span id="fs-stats" class="muted">empty</span>
+      </div>
+    </section>
+
+    <!-- ---------- centre: agent stream ---------- -->
+    <section class="panel stream">
+      <div class="panel-head">
+        <h2>Shared thought stream</h2>
+        <div class="panel-head-actions">
+          <label class="chk"><input type="checkbox" id="filter-tools" checked /> tools</label>
+          <label class="chk"><input type="checkbox" id="filter-thoughts" checked /> thoughts</label>
+          <button id="btn-clear-stream" class="icon-btn" type="button" title="Clear stream">🗑</button>
+        </div>
+      </div>
+
+      <div id="stream" class="stream-body" aria-live="polite"></div>
+
+      <form id="task-form" class="composer">
+        <textarea id="task-input" rows="3" placeholder="Describe what the fort should build…  e.g. “Build a single-page pomodoro timer with presets and a dark theme, then publish it.”"></textarea>
+        <div class="composer-row">
+          <span id="run-state" class="muted">idle</span>
+          <button id="btn-run" class="btn primary" type="submit">Start the fort</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ---------- right: editor / preview / console ---------- -->
+    <section class="panel work">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="editor" role="tab" type="button">Editor</button>
+        <button class="tab" data-tab="preview" role="tab" type="button">Preview</button>
+        <button class="tab" data-tab="console" role="tab" type="button">Console</button>
+      </div>
+
+      <div class="tabpane active" data-pane="editor">
+        <div class="editor-head">
+          <span id="editor-path" class="path muted">no file selected</span>
+          <button id="btn-save" class="btn ghost sm" type="button" disabled>Save</button>
+        </div>
+        <textarea id="editor" spellcheck="false" placeholder="Select a file from the workspace…"></textarea>
+      </div>
+
+      <div class="tabpane" data-pane="preview">
+        <div class="editor-head">
+          <span class="muted">renders <code>index.html</code> from the workspace</span>
+          <button id="btn-refresh-preview" class="btn ghost sm" type="button">Refresh</button>
+        </div>
+        <iframe id="preview" title="Workspace preview" sandbox="allow-scripts allow-forms allow-modals"></iframe>
+      </div>
+
+      <div class="tabpane" data-pane="console">
+        <div class="editor-head">
+          <span class="muted">python (pyodide) &amp; shell output</span>
+          <button id="btn-clear-console" class="btn ghost sm" type="button">Clear</button>
+        </div>
+        <pre id="console" class="console"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-round">round 0</span>
+    <span id="status-agent">—</span>
+    <span id="status-tokens">0 tokens</span>
+    <span class="grow"></span>
+    <span class="muted">CodeFort is multiple AI, and these models can make mistakes.</span>
+  </footer>
+</div>
+
+<!-- ============================ MODALS ============================ -->
+<dialog id="dlg-settings" class="dlg">
+  <form method="dialog" class="dlg-body">
+    <h2>Settings</h2>
+
+    <label class="field">
+      <span>Mistral API key</span>
+      <input id="set-key" type="password" autocomplete="off" placeholder="sk-… (stored in this browser only)" />
+      <small id="set-key-hint" class="muted"></small>
+    </label>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Architect</span>
+        <input id="set-model-architect" type="text" />
+      </label>
+      <label class="field">
+        <span>Builder</span>
+        <input id="set-model-builder" type="text" />
+      </label>
+      <label class="field">
+        <span>Scout</span>
+        <input id="set-model-scout" type="text" />
+      </label>
+    </div>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Max rounds</span>
+        <input id="set-rounds" type="number" min="1" max="40" />
+      </label>
+      <label class="field">
+        <span>Tool steps / turn</span>
+        <input id="set-steps" type="number" min="1" max="20" />
+      </label>
+      <label class="field">
+        <span>Temperature</span>
+        <input id="set-temp" type="number" min="0" max="1.5" step="0.05" />
+      </label>
+    </div>
+
+    <label class="field">
+      <span>Supabase URL</span>
+      <input id="set-sup-url" type="text" placeholder="https://xxxx.supabase.co" />
+    </label>
+    <label class="field">
+      <span>Supabase publishable key</span>
+      <input id="set-sup-key" type="text" placeholder="anon / publishable key" />
+    </label>
+
+    <p class="note">
+      Keys typed here stay in this browser's <code>localStorage</code>. Values baked in at
+      deploy time are public by nature — see <code>docs/SECURITY.md</code>.
+    </p>
+
+    <menu class="dlg-actions">
+      <button value="cancel" class="btn ghost" type="submit">Close</button>
+      <button id="set-save" value="save" class="btn primary" type="submit">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-publish" class="dlg">
+  <form method="dialog" class="dlg-body">
+    <h2>Publish workspace</h2>
+    <label class="field">
+      <span>Published under the name</span>
+      <input id="pub-name" type="text" placeholder="e.g. mistral-large-latest, or your own name" />
+    </label>
+    <label class="field">
+      <span>Title</span>
+      <input id="pub-title" type="text" placeholder="My project" />
+    </label>
+    <label class="field">
+      <span>Description</span>
+      <input id="pub-desc" type="text" placeholder="One line about it" />
+    </label>
+    <p id="pub-result" class="note" hidden></p>
+    <menu class="dlg-actions">
+      <button value="cancel" class="btn ghost" type="submit">Close</button>
+      <button id="pub-go" value="publish" class="btn primary" type="submit">Publish</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-prompt" class="dlg">
+  <form method="dialog" class="dlg-body">
+    <h2 id="prompt-title">New file</h2>
+    <label class="field">
+      <span id="prompt-label">Path</span>
+      <input id="prompt-input" type="text" />
+    </label>
+    <menu class="dlg-actions">
+      <button value="cancel" class="btn ghost" type="submit">Cancel</button>
+      <button value="ok" class="btn primary" type="submit">OK</button>
+    </menu>
+  </form>
+</dialog>
+
+<script type="module" src="./assets/js/main.js"></script>
+</body>
+</html>

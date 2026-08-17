@@ -1,0 +1,337 @@
+/**
+ * smoke.mjs — headless checks for the parts that have real logic:
+ * the virtual filesystem, the shell interpreter and the publish bundler.
+ *
+ *   node tests/smoke.mjs
+ *
+ * These modules are deliberately free of DOM dependencies so they can run
+ * here as well as in the browser.
+ */
+
+import assert from 'node:assert/strict';
+import { VFS, normalize, dirname, basename } from '../assets/js/vfs.js';
+import { Shell, tokenize, tokenizeWords } from '../assets/js/shell.js';
+import { vfs } from '../assets/js/vfs.js';
+import { bundleToHtml, makeSlug, slugFromLocation } from '../assets/js/supabase.js';
+
+let passed = 0;
+let failed = 0;
+
+function test(name, fn) {
+  try {
+    fn();
+    passed++;
+    console.log(`  ✓ ${name}`);
+  } catch (err) {
+    failed++;
+    console.error(`  ✗ ${name}\n      ${err.message}`);
+  }
+}
+
+async function testAsync(name, fn) {
+  try {
+    await fn();
+    passed++;
+    console.log(`  ✓ ${name}`);
+  } catch (err) {
+    failed++;
+    console.error(`  ✗ ${name}\n      ${err.message}`);
+  }
+}
+
+/* ------------------------------------------------------------------ paths */
+
+console.log('\npaths');
+
+test('normalize collapses . .. and doubled slashes', () => {
+  assert.equal(normalize('a//b/./c'), '/a/b/c');
+  assert.equal(normalize('/a/b/../c'), '/a/c');
+  assert.equal(normalize(''), '/');
+  assert.equal(normalize('/a/b/'), '/a/b');
+});
+
+test('dirname and basename', () => {
+  assert.equal(dirname('/a/b/c.txt'), '/a/b');
+  assert.equal(dirname('/top.txt'), '/');
+  assert.equal(basename('/a/b/c.txt'), 'c.txt');
+});
+
+/* -------------------------------------------------------------------- vfs */
+
+console.log('\nvfs');
+
+test('write creates missing parents', () => {
+  const fs = new VFS();
+  fs.write('/deep/nested/file.txt', 'hi');
+  assert.ok(fs.isDir('/deep'));
+  assert.ok(fs.isDir('/deep/nested'));
+  assert.equal(fs.read('/deep/nested/file.txt'), 'hi');
+});
+
+test('edit refuses an ambiguous find', () => {
+  const fs = new VFS();
+  fs.write('/a.txt', 'x\nx\n');
+  assert.throws(() => fs.edit('/a.txt', 'x', 'y'), /matches 2 times/);
+  assert.equal(fs.edit('/a.txt', 'x', 'y', true), 2);
+  assert.equal(fs.read('/a.txt'), 'y\ny\n');
+});
+
+test('edit reports a missing find', () => {
+  const fs = new VFS();
+  fs.write('/a.txt', 'hello');
+  assert.throws(() => fs.edit('/a.txt', 'nope', 'x'), /not present/);
+});
+
+test('remove takes the whole subtree', () => {
+  const fs = new VFS();
+  fs.write('/src/a.js', '1');
+  fs.write('/src/lib/b.js', '2');
+  assert.equal(fs.remove('/src'), 4); // /src, /src/a.js, /src/lib, /src/lib/b.js
+  assert.equal(fs.files().length, 0);
+});
+
+test('refuses to delete or move the root', () => {
+  const fs = new VFS();
+  assert.throws(() => fs.remove('/'), /refusing/);
+  assert.throws(() => fs.move('/', '/x'), /refusing/);
+});
+
+test('move renames a whole directory', () => {
+  const fs = new VFS();
+  fs.write('/a/one.txt', '1');
+  fs.write('/a/two.txt', '2');
+  fs.move('/a', '/b');
+  assert.deepEqual(fs.files(), ['/b/one.txt', '/b/two.txt']);
+  assert.ok(!fs.exists('/a'));
+});
+
+test('move rejects a move into itself', () => {
+  const fs = new VFS();
+  fs.mkdir('/a');
+  assert.throws(() => fs.move('/a', '/a/b'), /into itself/);
+});
+
+test('snapshot round-trips, empty folders included', () => {
+  const fs = new VFS();
+  fs.write('/index.html', '<h1>hi</h1>');
+  fs.mkdir('/empty');
+  const snap = fs.snapshot();
+
+  const other = new VFS();
+  other.restore(snap);
+  assert.equal(other.read('/index.html'), '<h1>hi</h1>');
+  assert.ok(other.isDir('/empty'));
+});
+
+test('tree renders nesting', () => {
+  const fs = new VFS();
+  fs.write('/a/b.txt', 'xy');
+  const t = fs.tree();
+  assert.match(t, /a\//);
+  assert.match(t, /b\.txt\s+\(2 bytes\)/);
+});
+
+/* ------------------------------------------------------------------ shell */
+
+console.log('\nshell');
+
+test('tokenize honours quotes and escapes', () => {
+  assert.deepEqual(tokenize('echo "a b" c'), ['echo', 'a b', 'c']);
+  assert.deepEqual(tokenize("echo 'a  b'"), ['echo', 'a  b']);
+  assert.deepEqual(tokenize('echo a\\ b'), ['echo', 'a b']);
+  assert.deepEqual(tokenize('echo ""'), ['echo', '']);
+});
+
+test('tokenizer records which words were quoted', () => {
+  const words = tokenizeWords('find . -name "*.js"');
+  assert.deepEqual(words.map((w) => w.value), ['find', '.', '-name', '*.js']);
+  assert.deepEqual(words.map((w) => w.quoted), [false, false, false, true]);
+});
+
+const sh = new Shell();
+const run = (cmd) => sh.run(cmd);
+
+await testAsync('echo and redirect create a file', async () => {
+  vfs.clear();
+  const r = await run('echo hello > /greet.txt');
+  assert.equal(r.code, 0);
+  assert.equal(vfs.read('/greet.txt'), 'hello\n');
+});
+
+await testAsync('append redirect adds to the file', async () => {
+  await run('echo again >> /greet.txt');
+  assert.equal(vfs.read('/greet.txt'), 'hello\nagain\n');
+});
+
+await testAsync('pipes flow left to right', async () => {
+  const r = await run('cat /greet.txt | wc -l');
+  assert.equal(r.stdout.trim(), '2');
+});
+
+await testAsync('mkdir, cd and pwd track state', async () => {
+  await run('mkdir -p /src/lib');
+  await run('cd /src/lib');
+  const r = await run('pwd');
+  assert.equal(r.stdout.trim(), '/src/lib');
+  await run('cd /');
+});
+
+await testAsync('relative paths resolve against cwd', async () => {
+  await run('mkdir /rel && cd /rel');
+  await run('echo x > note.txt');
+  assert.equal(vfs.read('/rel/note.txt'), 'x\n');
+  await run('cd /');
+});
+
+await testAsync('&& short-circuits on failure', async () => {
+  const r = await run('false && echo nope');
+  assert.equal(r.stdout.trim(), '');
+  const r2 = await run('true && echo yes');
+  assert.equal(r2.stdout.trim(), 'yes');
+});
+
+await testAsync('|| runs only after a failure', async () => {
+  const r = await run('false || echo fallback');
+  assert.equal(r.stdout.trim(), 'fallback');
+});
+
+await testAsync('grep -n finds matching lines', async () => {
+  vfs.write('/code.js', 'const a = 1;\n// TODO: fix\nconst b = 2;\n');
+  const r = await run('grep -n TODO /code.js');
+  assert.match(r.stdout, /^2:\/\/ TODO: fix$/m);
+});
+
+await testAsync('grep -r sweeps the workspace', async () => {
+  const r = await run('grep -rl TODO /');
+  assert.match(r.stdout, /\/code\.js/);
+});
+
+await testAsync('grep exits non-zero with no match', async () => {
+  const r = await run('grep zzzz /code.js');
+  assert.equal(r.code, 1);
+});
+
+await testAsync('sed -i rewrites in place', async () => {
+  await run('sed -i "s/TODO/DONE/" /code.js');
+  assert.match(vfs.read('/code.js'), /DONE/);
+});
+
+await testAsync('find filters by name and type', async () => {
+  vfs.write('/src/app.js', '');
+  vfs.write('/src/app.css', '');
+  const r = await run('find /src -type f -name "*.js"');
+  assert.match(r.stdout, /\/src\/app\.js/);
+  assert.ok(!/app\.css/.test(r.stdout));
+});
+
+await testAsync('globs expand against the workspace', async () => {
+  const r = await run('ls /src/*.css');
+  assert.match(r.stdout, /app\.css/);
+});
+
+await testAsync('rm needs -r for a directory', async () => {
+  const bad = await run('rm /src');
+  assert.equal(bad.code, 1);
+  const good = await run('rm -rf /src');
+  assert.equal(good.code, 0);
+  assert.ok(!vfs.exists('/src'));
+});
+
+await testAsync('cp and mv move content around', async () => {
+  vfs.write('/one.txt', 'content');
+  await run('cp /one.txt /two.txt');
+  assert.equal(vfs.read('/two.txt'), 'content');
+  await run('mv /two.txt /three.txt');
+  assert.ok(!vfs.exists('/two.txt'));
+  assert.equal(vfs.read('/three.txt'), 'content');
+});
+
+await testAsync('head and tail slice lines', async () => {
+  vfs.write('/nums.txt', '1\n2\n3\n4\n5\n');
+  assert.equal((await run('head -n 2 /nums.txt')).stdout, '1\n2\n');
+  assert.equal((await run('tail -n 2 /nums.txt')).stdout, '4\n5\n');
+});
+
+await testAsync('sort -n orders numerically', async () => {
+  vfs.write('/mix.txt', '10\n2\n33\n');
+  assert.equal((await run('sort -n /mix.txt')).stdout, '2\n10\n33\n');
+});
+
+await testAsync('unknown commands report 127', async () => {
+  const r = await run('definitely-not-a-command');
+  assert.equal(r.code, 127);
+  assert.match(r.stderr, /command not found/);
+});
+
+await testAsync('a missing file is an error, not a crash', async () => {
+  const r = await run('cat /nope.txt');
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /No such file/);
+});
+
+await testAsync('semicolons run commands in sequence', async () => {
+  vfs.clear();
+  const r = await run('echo a > /a; echo b > /b; ls /');
+  assert.match(r.stdout, /a/);
+  assert.match(r.stdout, /b/);
+});
+
+/* -------------------------------------------------------------- publishing */
+
+console.log('\npublishing');
+
+test('slugs are the right shape and unique', () => {
+  const a = makeSlug();
+  const b = makeSlug();
+  assert.match(a, /^[a-z0-9]{12}$/);
+  assert.notEqual(a, b);
+});
+
+test('slug is read from ?=, ?p= and #', () => {
+  assert.equal(slugFromLocation({ search: '?=abc123xyz', hash: '' }), 'abc123xyz');
+  assert.equal(slugFromLocation({ search: '?p=abc123xyz', hash: '' }), 'abc123xyz');
+  assert.equal(slugFromLocation({ search: '', hash: '#abc123xyz' }), 'abc123xyz');
+  assert.equal(slugFromLocation({ search: '', hash: '' }), null);
+  assert.equal(slugFromLocation({ search: '?=../etc/passwd', hash: '' }), null);
+});
+
+test('bundler inlines local css and js', () => {
+  const html = bundleToHtml({
+    '/index.html': '<link rel="stylesheet" href="style.css"><script src="app.js"></script><p>hi</p>',
+    '/style.css': 'body{color:red}',
+    '/app.js': 'console.log(1)'
+  });
+  assert.match(html, /<style>\s*body\{color:red\}/);
+  assert.match(html, /console\.log\(1\)/);
+  assert.ok(!/href="style\.css"/.test(html));
+});
+
+test('bundler leaves remote references alone', () => {
+  const html = bundleToHtml({
+    '/index.html': '<script src="https://cdn.example.com/x.js"></script>'
+  });
+  assert.match(html, /https:\/\/cdn\.example\.com\/x\.js/);
+});
+
+test('bundler rewrites a local image to a data URL', () => {
+  const html = bundleToHtml({
+    '/index.html': '<img src="logo.svg">',
+    '/logo.svg': '<svg/>'
+  });
+  assert.match(html, /src="data:image\/svg\+xml/);
+});
+
+test('bundler falls back when there is no entry point', () => {
+  const html = bundleToHtml({ '/notes.txt': 'hello' });
+  assert.match(html, /No HTML entry point/);
+});
+
+test('bundler finds a non-root index.html', () => {
+  const html = bundleToHtml({ '/site/index.html': '<p>nested</p>' });
+  assert.match(html, /nested/);
+});
+
+/* ------------------------------------------------------------------- done */
+
+console.log(`\n${passed} passed, ${failed} failed\n`);
+process.exit(failed ? 1 : 0);
