@@ -91,8 +91,18 @@
 
   <main class="grid">
 
-    <!-- ---------- left: files ---------- -->
+    <!-- ---------- left: tasks + files ---------- -->
     <section class="panel files">
+      <div class="panel-head">
+        <h2>Tasks</h2>
+        <div class="panel-head-actions">
+          <button id="btn-new-task" class="icon-btn" type="button" title="New task">＋</button>
+          <button id="btn-rename-task" class="icon-btn" type="button" title="Rename this task">✎</button>
+          <button id="btn-delete-task" class="icon-btn" type="button" title="Delete this task">🗑</button>
+        </div>
+      </div>
+      <div id="task-list" class="task-list" role="listbox" aria-label="Tasks"></div>
+
       <div class="panel-head">
         <h2>Workspace</h2>
         <div class="panel-head-actions">
@@ -183,19 +193,9 @@
       <small id="set-key-hint" class="muted"></small>
     </label>
 
-    <div class="field-row">
-      <label class="field">
-        <span>Architect</span>
-        <input id="set-model-architect" type="text" />
-      </label>
-      <label class="field">
-        <span>Builder</span>
-        <input id="set-model-builder" type="text" />
-      </label>
-      <label class="field">
-        <span>Scout</span>
-        <input id="set-model-scout" type="text" />
-      </label>
+    <div class="field">
+      <span>Agents</span>
+      <dl id="set-models" class="readonly-list"></dl>
     </div>
 
     <div class="field-row">
@@ -213,18 +213,10 @@
       </label>
     </div>
 
-    <label class="field">
-      <span>Supabase URL</span>
-      <input id="set-sup-url" type="text" placeholder="https://xxxx.supabase.co" />
-    </label>
-    <label class="field">
-      <span>Supabase publishable key</span>
-      <input id="set-sup-key" type="text" placeholder="anon / publishable key" />
-    </label>
-
     <p class="note">
-      Keys typed here stay in this browser's <code>localStorage</code>. Values baked in at
-      deploy time are public by nature — see <code>docs/SECURITY.md</code>.
+      Your key stays in this browser's <code>localStorage</code> and goes nowhere but
+      <code>api.mistral.ai</code>. The agent lineup and the Supabase project belong to this
+      deployment and are set from repository secrets — see <code>docs/SECURITY.md</code>.
     </p>
 
     <menu class="dlg-actions">

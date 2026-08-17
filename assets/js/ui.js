@@ -27,6 +27,7 @@ export class UI {
 
     this.el = {
       roster: $('#roster'),
+      taskList: $('#task-list'),
       tree: $('#tree'),
       fsStats: $('#fs-stats'),
       stream: $('#stream'),
@@ -64,6 +65,52 @@ export class UI {
         <span class="msg-model">${esc(settings.models[agent.modelKey] || '')}</span>
         <span class="vote${v?.done ? ' done' : ''}">${esc(voteText)}</span>`;
       this.el.roster.appendChild(chip);
+    }
+  }
+
+  /* ---------------------------------------------------------------- tasks */
+
+  renderTasks(tasks, activeId, onPick) {
+    const root = this.el.taskList;
+    root.innerHTML = '';
+
+    for (const task of tasks) {
+      const fileCount = Object.values(task.files || {}).filter((c) => c !== null).length;
+
+      const row = document.createElement('div');
+      row.className = 'task-row' + (task.id === activeId ? ' active' : '');
+      row.dataset.id = task.id;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(task.id === activeId));
+      row.title = task.brief || task.name;
+
+      row.innerHTML =
+        `<span class="task-name"></span>` +
+        (task.published ? '<span class="task-pub" title="Published">●</span>' : '') +
+        `<span class="task-meta">${fileCount}</span>`;
+      row.querySelector('.task-name').textContent = task.name;
+
+      row.addEventListener('click', () => onPick(task.id));
+      root.appendChild(row);
+    }
+  }
+
+  /**
+   * Switching workspaces mid-run would pull the floor out from under the
+   * agents, so the list is genuinely disabled rather than merely dimmed —
+   * and carries the reason, since a disabled control cannot explain itself
+   * when clicked.
+   */
+  setTasksLocked(locked) {
+    const why = 'Tasks are locked while the fort is running — stop the run to switch.';
+    this.el.taskList.setAttribute('aria-disabled', String(locked));
+    this.el.taskList.title = locked ? why : '';
+
+    for (const id of ['#btn-new-task', '#btn-rename-task', '#btn-delete-task']) {
+      const btn = $(id);
+      btn.disabled = locked;
+      if (locked) btn.dataset.title = btn.title;
+      btn.title = locked ? why : (btn.dataset.title || btn.title);
     }
   }
 
@@ -290,11 +337,17 @@ export class UI {
   /** Say why a click did nothing, in the one spot next to the button. */
   hint(message) {
     clearTimeout(this._hintTimer);
+    // Restore whatever was there — "running" during a run, "idle" otherwise.
+    const previous = this.el.runState.classList.contains('hint')
+      ? this._hintPrevious
+      : this.el.runState.textContent;
+    this._hintPrevious = previous;
+
     this.el.runState.textContent = message;
     this.el.runState.classList.add('hint');
     this._hintTimer = setTimeout(() => {
       this.el.runState.classList.remove('hint');
-      this.el.runState.textContent = 'idle';
+      this.el.runState.textContent = previous;
     }, 4000);
   }
 

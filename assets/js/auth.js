@@ -202,7 +202,7 @@ export class Auth extends EventTarget {
 
 const NOT_CONFIGURED =
   'Accounts are unavailable: this CodeFort has no Supabase configured. ' +
-  'Set the SUP_URL and SUP_PB repository secrets, or fill them in under Settings.';
+  'Set the SUP_URL and SUP_PB repository secrets and redeploy.';
 
 function isEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());

@@ -41,6 +41,13 @@ function writeStore(obj) {
   }
 }
 
+/**
+ * Settings a visitor is allowed to set for themselves. Everything else —
+ * the agent lineup and the Supabase project — belongs to the deployment and
+ * comes from the repository secrets, not from whoever opened the page.
+ */
+const USER_EDITABLE = new Set(['mistralKey', 'maxRounds', 'maxStepsPerTurn', 'temperature']);
+
 /** Full effective settings object. */
 export function getSettings() {
   const saved = readStore();
@@ -48,34 +55,51 @@ export function getSettings() {
     ...DEFAULTS,
     ...saved,
     mistralKey: saved.mistralKey || baked.mistralKey || '',
-    supabaseUrl: saved.supabaseUrl || baked.supabaseUrl || '',
-    supabaseKey: saved.supabaseKey || baked.supabaseKey || '',
-    models: { ...DEFAULTS.models, ...(saved.models || {}) }
+    supabaseUrl: baked.supabaseUrl || '',
+    supabaseKey: baked.supabaseKey || '',
+    models: { ...DEFAULTS.models }
   };
 }
 
-/** Merge a patch into the user's stored settings. */
+/** Merge a patch into the user's stored settings. Non-editable keys are dropped. */
 export function saveSettings(patch) {
-  const saved = readStore();
-  const next = { ...saved, ...patch };
-  if (patch.models) next.models = { ...(saved.models || {}), ...patch.models };
+  const next = { ...readStore() };
 
-  // Don't persist a value identical to the baked-in one — keeps the store
-  // clean so a later deploy with a rotated secret takes effect.
-  for (const k of ['mistralKey', 'supabaseUrl', 'supabaseKey']) {
-    if (next[k] && next[k] === baked[k]) delete next[k];
-    if (next[k] === '') delete next[k];
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (!USER_EDITABLE.has(key)) continue;
+    next[key] = value;
   }
+
+  // Don't persist a key identical to the baked-in one — keeps the store clean
+  // so a later deploy with a rotated secret takes effect.
+  if (!next.mistralKey || next.mistralKey === baked.mistralKey) delete next.mistralKey;
+
   writeStore(next);
   return getSettings();
 }
 
-/** Which source a credential came from — used for the Settings hint text. */
-export function credentialSource(field) {
+/**
+ * Drop settings written by older builds that let visitors override the model
+ * lineup and the Supabase project. They are no longer read; this stops them
+ * lingering in storage as a confusing artefact.
+ */
+function pruneLegacy() {
   const saved = readStore();
-  if (saved[field]) return 'browser';
-  if (baked[field]) return 'deploy';
-  return 'none';
+  const stale = ['models', 'supabaseUrl', 'supabaseKey'].filter((k) => k in saved);
+  if (!stale.length) return;
+  for (const k of stale) delete saved[k];
+  writeStore(saved);
+}
+
+pruneLegacy();
+
+/**
+ * Where the Mistral key came from — used for the Settings hint text.
+ * @returns {'browser'|'deploy'|'none'}
+ */
+export function credentialSource(field = 'mistralKey') {
+  if (field === 'mistralKey' && readStore().mistralKey) return 'browser';
+  return baked[field] ? 'deploy' : 'none';
 }
 
 /** Build metadata stamped in by the deploy workflow. */

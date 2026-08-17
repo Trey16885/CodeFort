@@ -332,6 +332,134 @@ test('bundler finds a non-root index.html', () => {
   assert.match(html, /nested/);
 });
 
+/* ------------------------------------------------------------------- tasks */
+
+console.log('\ntasks');
+
+const { TaskStore, nameFromBrief } = await import('../assets/js/tasks.js');
+
+test('a task name is derived from its brief', () => {
+  assert.equal(nameFromBrief('build a pomodoro timer'), 'Build a pomodoro timer');
+  assert.equal(nameFromBrief('   '), 'Untitled task');
+  const long = nameFromBrief('build a really quite elaborate dashboard with several charts and filters');
+  assert.ok(long.length <= 45, `too long: ${long}`);
+  assert.ok(long.endsWith('…'));
+});
+
+test('hydrate always produces one active task', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  assert.equal(store.tasks.length, 1);
+  assert.ok(store.active);
+  assert.equal(store.activeId, store.active.id);
+});
+
+test('each task keeps its own workspace', () => {
+  const store = new TaskStore();
+  store.hydrate();
+
+  const first = store.active.id;
+  vfs.clear();
+  vfs.write('/a.html', 'alpha');
+
+  store.create('Second');
+  assert.deepEqual(vfs.files(), [], 'a new task starts with an empty workspace');
+
+  vfs.write('/b.html', 'beta');
+  const second = store.activeId;
+
+  store.switchTo(first);
+  assert.deepEqual(vfs.files(), ['/a.html']);
+  assert.equal(vfs.read('/a.html'), 'alpha');
+
+  store.switchTo(second);
+  assert.deepEqual(vfs.files(), ['/b.html']);
+  assert.equal(vfs.read('/b.html'), 'beta');
+});
+
+test('switching captures edits made since the last save', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  const first = store.activeId;
+
+  vfs.clear();
+  vfs.write('/notes.txt', 'v1');
+  store.create('Other');
+  store.switchTo(first);
+
+  vfs.write('/notes.txt', 'v2');       // edited, debounce not yet fired
+  const other = store.list().find((t) => t.id !== first).id;
+  store.switchTo(other);
+  store.switchTo(first);
+
+  assert.equal(vfs.read('/notes.txt'), 'v2');
+});
+
+test('deleting the last task leaves a fresh empty one', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  vfs.write('/x.txt', 'gone');
+
+  store.remove(store.activeId);
+  assert.equal(store.tasks.length, 1);
+  assert.deepEqual(vfs.files(), []);
+});
+
+test('deleting the active task falls back to another', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  const first = store.activeId;
+  store.create('Keeper');
+  const keeper = store.activeId;
+
+  store.remove(first);
+  assert.equal(store.tasks.length, 1);
+  assert.equal(store.activeId, keeper);
+});
+
+test('renaming, briefs and publish state stick to their task', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  const first = store.activeId;
+
+  store.rename(first, 'Renamed');
+  store.setBrief('do the thing');
+  store.setPublished({ url: 'https://x/?=abc', slug: 'abc' });
+
+  store.create('Another');
+  assert.equal(store.active.brief, '');
+  assert.equal(store.active.published, null);
+
+  store.switchTo(first);
+  assert.equal(store.active.name, 'Renamed');
+  assert.equal(store.active.brief, 'do the thing');
+  assert.equal(store.active.published.slug, 'abc');
+});
+
+test('a default-named task is renamed by its first brief', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  store.rename(store.activeId, 'New task');
+  store.setBrief('build a snake game', { rename: true });
+  assert.equal(store.active.name, 'Build a snake game');
+
+  store.setBrief('something else entirely', { rename: true });
+  assert.equal(store.active.name, 'Build a snake game', 'a named task is not renamed again');
+});
+
+test('the task list is ordered by most recent activity', () => {
+  const store = new TaskStore();
+  store.hydrate();
+  store.rename(store.activeId, 'Older');
+  const older = store.activeId;
+  store.create('Newer');
+
+  store.switchTo(older);
+  store.rename(older, 'Older, touched');
+
+  assert.equal(store.list()[0].name, 'Older, touched');
+});
+
 /* ---------------------------------------------------------------- accounts */
 
 console.log('\naccounts');

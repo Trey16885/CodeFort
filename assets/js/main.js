@@ -11,6 +11,7 @@ import { getSettings, saveSettings, credentialSource, buildInfo } from './config
 import { AGENTS } from './agents.js';
 import { bus } from './thoughts.js';
 import { vfs, normalize } from './vfs.js';
+import { tasks } from './tasks.js';
 import { Orchestrator } from './orchestrator.js';
 import { Auth } from './auth.js';
 import { UI, $ } from './ui.js';
@@ -211,8 +212,42 @@ function startStudio() {
     if ($('.tab.active')?.dataset.tab === 'preview') ui.renderPreview();
   });
 
-  vfs.hydrate();
+  /* ---------------------------------------------------------------- tasks */
+
+  // Streams are per-task but not persisted — switching back inside a session
+  // brings the discussion with it; a reload starts the log fresh.
+  const streams = new Map();
+
+  tasks.addEventListener('change', (e) => {
+    ui.renderTasks(e.detail.tasks, e.detail.activeId, pickTask);
+  });
+
+  tasks.addEventListener('quota', () => {
+    ui.log('browser storage is full — tasks will stop saving until you delete one', 'c-err');
+  });
+
+  tasks.hydrate();
+  $('#task-input').value = tasks.active?.brief || '';
   refreshTree();
+
+  function pickTask(id) {
+    if (id === tasks.activeId) return;
+    if (orch.running) {
+      ui.hint('Finish or stop the run before switching tasks.');
+      return;
+    }
+    streams.set(tasks.activeId, bus.entries);
+    ui.setDirty(false);
+
+    const next = tasks.switchTo(id);
+    bus.entries = streams.get(id) || [];
+    replayStream(ui);
+
+    $('#task-input').value = next.brief || '';
+    verdicts.clear();
+    ui.renderRoster(getSettings(), { verdicts });
+    ui.setStatus({ round: 0, agent: '—' });
+  }
 
   /* --------------------------------------------------------------- stream */
 
@@ -223,6 +258,7 @@ function startStudio() {
 
   orch.addEventListener('start', () => {
     ui.setRunning(true);
+    ui.setTasksLocked(true);
     ui.setStatus({ round: 0, agent: '—' });
   });
 
@@ -244,9 +280,11 @@ function startStudio() {
   orch.addEventListener('end', (e) => {
     activeAgentId = null;
     ui.setRunning(false);
+    ui.setTasksLocked(false);
     ui.setStatus({ agent: outcomeLabel(e.detail.outcome) });
     ui.renderRoster(getSettings(), { verdicts });
     ui.renderPreview();
+    if (e.detail.published) tasks.setPublished(e.detail.published);
   });
 
   /* ------------------------------------------------------------ run / stop */
@@ -270,12 +308,21 @@ function startStudio() {
     }
 
     verdicts.clear();
+    tasks.setBrief(task, { rename: true });   // an unnamed task takes its name from the brief
+
     try {
       await orch.run(task);
     } catch (err) {
       ui.log(err.message, 'c-err');
       ui.setRunning(false);
+      ui.setTasksLocked(false);
     }
+  });
+
+  // Keep the brief with its task even if the run is never started — and let it
+  // name a still-unnamed task, so the list doesn't fill up with "New task".
+  $('#task-input').addEventListener('change', () => {
+    tasks.setBrief($('#task-input').value, { rename: true });
   });
 
   $('#task-input').addEventListener('keydown', (ev) => {
@@ -288,6 +335,51 @@ function startStudio() {
   $('#btn-stop').addEventListener('click', () => {
     orch.stop();
     ui.log('stop requested — finishing the current step', 'c-err');
+  });
+
+  /* -------------------------------------------------------- task controls */
+
+  $('#btn-new-task').addEventListener('click', async () => {
+    const name = await askFor('New task', 'Name', 'e.g. Landing page', { raw: true });
+    if (name === null) return;
+
+    streams.set(tasks.activeId, bus.entries);
+    try {
+      tasks.create(name || 'New task');
+    } catch (err) {
+      ui.hint(err.message);
+      return;
+    }
+    bus.entries = [];
+    replayStream(ui);
+
+    $('#task-input').value = '';
+    $('#task-input').focus();
+    verdicts.clear();
+    ui.setDirty(false);
+    ui.renderRoster(getSettings(), { verdicts });
+    ui.setStatus({ round: 0, agent: '—' });
+  });
+
+  $('#btn-rename-task').addEventListener('click', async () => {
+    const current = tasks.active;
+    if (!current) return;
+    const name = await askFor('Rename task', 'Name', current.name, { raw: true });
+    if (name) tasks.rename(current.id, name);
+  });
+
+  $('#btn-delete-task').addEventListener('click', () => {
+    const current = tasks.active;
+    if (!current) return;
+    if (!confirm(`Delete "${current.name}" and its workspace? This cannot be undone.`)) return;
+
+    streams.delete(current.id);
+    ui.setDirty(false);
+    tasks.remove(current.id);
+
+    bus.entries = streams.get(tasks.activeId) || [];
+    replayStream(ui);
+    $('#task-input').value = tasks.active?.brief || '';
   });
 
   /* -------------------------------------------------------- file controls */
@@ -388,16 +480,9 @@ function startStudio() {
     if (ev.target.returnValue !== 'save') return;
     saveSettings({
       mistralKey: $('#set-key').value.trim(),
-      supabaseUrl: $('#set-sup-url').value.trim(),
-      supabaseKey: $('#set-sup-key').value.trim(),
       maxRounds: clampInt($('#set-rounds').value, 1, 40, 8),
       maxStepsPerTurn: clampInt($('#set-steps').value, 1, 20, 8),
-      temperature: clampFloat($('#set-temp').value, 0, 1.5, 0.35),
-      models: {
-        architect: $('#set-model-architect').value.trim() || 'mistral-large-latest',
-        builder: $('#set-model-builder').value.trim() || 'mistral-medium-latest',
-        scout: $('#set-model-scout').value.trim() || 'mistral-small-latest'
-      }
+      temperature: clampFloat($('#set-temp').value, 0, 1.5, 0.35)
     });
     syncHeader(ui);
   });
@@ -413,7 +498,7 @@ function startStudio() {
 
     if (!supa.isConfigured(settings)) {
       result.hidden = false;
-      result.textContent = 'Supabase is not configured. Set SUP_URL and SUP_PB as repository secrets, or fill them in under Settings.';
+      result.textContent = 'Supabase is not configured. Set the SUP_URL and SUP_PB repository secrets and redeploy.';
     }
     $('#dlg-publish').showModal();
   });
@@ -466,11 +551,12 @@ function syncHeader(ui) {
 function openSettings(ui, message) {
   const s = getSettings();
   $('#set-key').value = credentialSource('mistralKey') === 'browser' ? s.mistralKey : '';
-  $('#set-sup-url').value = credentialSource('supabaseUrl') === 'browser' ? s.supabaseUrl : '';
-  $('#set-sup-key').value = credentialSource('supabaseKey') === 'browser' ? s.supabaseKey : '';
-  $('#set-model-architect').value = s.models.architect;
-  $('#set-model-builder').value = s.models.builder;
-  $('#set-model-scout').value = s.models.scout;
+
+  // The lineup is shown, not offered — it is what CodeFort is.
+  $('#set-models').innerHTML = AGENTS.map((a) =>
+    `<dt>${escapeHtml(a.name)}</dt><dd>${escapeHtml(s.models[a.modelKey])}</dd>`
+  ).join('');
+
   $('#set-rounds').value = s.maxRounds;
   $('#set-steps').value = s.maxStepsPerTurn;
   $('#set-temp').value = s.temperature;
@@ -495,6 +581,7 @@ function announcePublication(ui, info) {
   }
   ui.log(`published: ${info.url}`, 'c-ok');
   bus.post({ who: 'CodeFort', text: `Published to ${info.url}` });
+  tasks.setPublished(info);
 }
 
 function replayStream(ui) {
@@ -502,19 +589,26 @@ function replayStream(ui) {
   for (const entry of bus.entries) ui.renderEntry(entry);
 }
 
-/** Promise-based replacement for window.prompt, using the shared dialog. */
-function askFor(title, label, placeholder = '') {
+/**
+ * Promise-based replacement for window.prompt, using the shared dialog.
+ * Answers are normalised as workspace paths unless `raw` is set — a task name
+ * is prose, not a path.
+ */
+function askFor(title, label, placeholder = '', { raw = false } = {}) {
   return new Promise((resolve) => {
     const dlg = $('#dlg-prompt');
     $('#prompt-title').textContent = title;
     $('#prompt-label').textContent = label;
     const input = $('#prompt-input');
-    input.value = '';
+    input.value = raw ? placeholder : '';
     input.placeholder = placeholder;
 
     const onClose = () => {
       dlg.removeEventListener('close', onClose);
-      resolve(dlg.returnValue === 'ok' && input.value.trim() ? normalize(input.value.trim()) : null);
+      if (dlg.returnValue !== 'ok') return resolve(null);
+      const value = input.value.trim();
+      if (raw) return resolve(value);
+      resolve(value ? normalize(value) : null);
     };
     dlg.addEventListener('close', onClose);
     dlg.showModal();
