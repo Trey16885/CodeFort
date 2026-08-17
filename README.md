@@ -23,7 +23,7 @@ Every time Mistral updates, CodeFort is already updated — the `-latest` aliase
 - **Edit, create and delete files and folders.** A full virtual workspace with a tree view, an editor, and a live preview of `/index.html`.
 - **Share thought processes between models.** Every reasoning line, tool call, result and verdict from all three agents goes into one stream, and each agent's next prompt is rebuilt from it. They read each other rather than working blind.
 - **Run Python and shell.** Real Python 3 via Pyodide, with the workspace mounted at `/work` so scripts can read and write project files. A POSIX-flavoured shell with pipes, redirects, `&&`/`||`, globs and about two dozen builtins.
-- **Work until they're done — not until a round counter runs out.** The run ends when all three vote done *in the same round* and nobody has touched the workspace since the first of those votes. A vote cast before someone else changed a file is stale and doesn't count. One holdout keeps the fort working.
+- **Work until they're done — not until a round counter runs out.** The run ends when all three vote done in the same round. One holdout keeps the fort working.
 - **Publish under their own name.** Any agent can call `publish_site`, which stores the workspace in Supabase under a random id and hands back a link:
 
   ```

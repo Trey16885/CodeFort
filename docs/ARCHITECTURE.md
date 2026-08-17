@@ -28,7 +28,6 @@ run(task)
     │       ├── build messages: [system charter, turn prompt]
     │       │      turn prompt = workspace tree
     │       │                  + recent shared stream (all three agents)
-    │       │                  + any nudge the orchestrator wants to add
     │       └── for step in 1..maxStepsPerTurn
     │           ├── POST /v1/chat/completions with the tool schemas
     │           ├── assistant text  -> shared stream as a thought
@@ -52,31 +51,19 @@ proceed from different beliefs about what has already been built.
 
 ### The done rule
 
-A run ends when **all three agents vote `done: true` in the same round, and
-nobody has changed the workspace since the earliest of those votes.**
+A run ends when **all three agents vote `done: true` in the same round.** A
+verdict from an earlier round does not carry forward — each agent re-votes on
+its own turn, every round, so the check always reflects what all three think
+right now.
 
-The second half matters. Without it, this sequence would end the run:
+One holdout keeps the run going. Nothing else stops it early; the round limit
+is the backstop.
 
-1. Architect votes done.
-2. Builder rewrites `index.html` and votes done.
-3. Scout votes done.
-
-The Architect approved a state that no longer exists. The orchestrator counts
-workspace mutations and stamps each verdict with the count at the time it was
-cast; if the earliest stamp is behind the current count, the votes are stale
-and the fort works another round. The agent whose vote went stale is told so in
-its next turn's nudge.
-
-### Nudges
-
-Small, deterministic steering the orchestrator adds to a turn prompt:
-
-- name any agent that is not satisfied, and quote its reason,
-- tell an agent when its done vote went stale,
-- point the Architect at `/PLAN.md` in round 1,
-- point the Builder at the missing `/index.html` from round 2 on.
-
-These are cheap rules, not another model call.
+Keeping agents honest about that vote is the charters' job, not the
+orchestrator's. Rule 8 in the shared rules tells each agent to vote done only
+after verifying, and the Scout's charter is explicitly to push back on a
+premature "done" — which works because the holdout's reason is in the shared
+stream the other two read on their next turn.
 
 ## Modules
 
@@ -102,8 +89,7 @@ Only `main.js` and `ui.js` touch the DOM, which is why `vfs.js`, `shell.js` and
 
 A flat `Map` of absolute path to node. Directories are stored explicitly, so an
 empty folder is a real thing an agent can create. Mutations dispatch a `change`
-event, which the UI listens to for the tree, editor and preview, and which the
-orchestrator counts for the staleness rule.
+event, which the UI listens to for the tree, editor and preview.
 
 The workspace is mirrored into `localStorage` on every change, so a reload
 picks up where the fort left off.

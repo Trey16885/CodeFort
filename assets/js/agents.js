@@ -120,7 +120,7 @@ ${task}`;
 }
 
 /** The per-turn user message: current world state plus the shared stream. */
-export function turnPromptFor(agent, { round, maxRounds, tree, transcript, nudge }) {
+export function turnPromptFor(agent, { round, maxRounds, tree, transcript }) {
   return `Round ${round} of at most ${maxRounds}. It is your turn, ${agent.name}.
 
 == Workspace ==
@@ -129,5 +129,5 @@ ${tree}
 == Shared stream (all three of you) ==
 ${transcript}
 
-${nudge ? `== Note ==\n${nudge}\n\n` : ''}Act now, then finish with end_turn.`;
+Act now, then finish with end_turn.`;
 }
