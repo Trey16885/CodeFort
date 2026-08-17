@@ -211,6 +211,17 @@ the network.
 Unpublishing is a human action only — there is no agent tool for it. The models
 can put work up; taking it down is the account holder's call.
 
+`listPublications()` reads the account's rows directly, scoped by
+`user_id=eq.<id>`, and deliberately omits `files` from the select — each row
+carries an entire workspace, and a listing has no use for it. That list is the
+server's truth rather than the task store's, so it also shows sites published
+from another browser or belonging to a deleted task.
+
+Because each publish mints a new slug, publishing a task that already has
+something live offers to replace it. The take-down runs only *after* the new
+publication is confirmed up, so a failed publish never leaves the task with
+nothing live.
+
 The viewer fetches the row and calls `bundleToHtml()`, which folds the whole
 workspace into a single document:
 

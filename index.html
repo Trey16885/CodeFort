@@ -84,6 +84,7 @@
       <span id="account" class="pill" title="Signed in as"></span>
       <button id="btn-settings" class="btn ghost" type="button">Settings</button>
       <button id="btn-publish" class="btn ghost" type="button">Publish</button>
+      <button id="btn-sites" class="btn ghost" type="button">My sites</button>
       <button id="btn-signout" class="btn ghost" type="button">Sign out</button>
       <button id="btn-stop" class="btn danger" type="button" disabled>Stop</button>
     </div>
@@ -243,6 +244,11 @@
     </label>
     <p id="pub-result" class="note" hidden></p>
 
+    <label id="pub-replace-wrap" class="chk chk-block" hidden>
+      <input type="checkbox" id="pub-replace" checked />
+      <span id="pub-replace-label"></span>
+    </label>
+
     <section id="pub-live-wrap" hidden>
       <h3 class="pub-live-head">Live for this task</h3>
       <ul id="pub-live" class="pub-live"></ul>
@@ -251,6 +257,21 @@
     <menu class="dlg-actions">
       <button value="cancel" class="btn ghost" type="submit">Close</button>
       <button id="pub-go" value="publish" class="btn primary" type="submit">Publish</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-sites" class="dlg">
+  <form method="dialog" class="dlg-body">
+    <h2>Your published sites</h2>
+    <p class="note">
+      Everything live under this account, straight from the database — including
+      anything published from another browser or a task you have since deleted.
+    </p>
+    <p id="sites-status" class="note">Loading…</p>
+    <ul id="sites-list" class="pub-live"></ul>
+    <menu class="dlg-actions">
+      <button value="cancel" class="btn ghost" type="submit">Close</button>
     </menu>
   </form>
 </dialog>
