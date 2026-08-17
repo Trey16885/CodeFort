@@ -1,9 +1,10 @@
 /**
  * main.js — bootstrap and wiring.
  *
- * Two modes on the same page:
- *   ?=<slug>   viewer  — render a published workspace
- *   (no query) studio  — the multi-model agent workbench
+ * Three modes on the same page:
+ *   ?=<slug>   viewer  — render a published workspace (public, no account)
+ *   signed out gate    — create an account or sign in
+ *   signed in  studio  — the multi-model agent workbench
  */
 
 import { getSettings, saveSettings, credentialSource, buildInfo } from './config.js';
@@ -11,14 +12,24 @@ import { AGENTS } from './agents.js';
 import { bus } from './thoughts.js';
 import { vfs, normalize } from './vfs.js';
 import { Orchestrator } from './orchestrator.js';
+import { Auth } from './auth.js';
 import { UI, $ } from './ui.js';
 import * as supa from './supabase.js';
+
+const auth = new Auth(getSettings);
 
 /* ==================================================================== boot */
 
 const slug = supa.slugFromLocation();
-if (slug) startViewer(slug);
-else startStudio();
+if (slug) {
+  // A published link is public by design — an account requirement here would
+  // make "publish" meaningless.
+  startViewer(slug);
+} else if (await auth.restore()) {
+  startStudio();
+} else {
+  startGate();
+}
 
 /* ================================================================== viewer */
 
@@ -64,6 +75,107 @@ ${escapeHtml(err.message)}</body>`;
   }
 }
 
+/* ==================================================================== gate */
+
+function startGate() {
+  const gate = $('#gate');
+  const form = $('#gate-form');
+  const submit = $('#gate-submit');
+  const message = $('#gate-message');
+  const emailEl = $('#gate-email');
+  const passwordEl = $('#gate-password');
+
+  gate.hidden = false;
+  let mode = 'signup';
+
+  const say = (text, kind = 'error') => {
+    message.hidden = false;
+    message.className = `gate-message${kind === 'error' ? '' : ' ' + kind}`;
+    message.textContent = text;
+  };
+  const quiet = () => { message.hidden = true; };
+
+  const setMode = (next) => {
+    mode = next;
+    quiet();
+    for (const tab of document.querySelectorAll('.gate-tab')) {
+      tab.classList.toggle('active', tab.dataset.mode === mode);
+    }
+    submit.textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+    passwordEl.autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+    passwordEl.placeholder = mode === 'signup' ? 'at least 8 characters' : 'your password';
+    $('#gate-swap-hint').innerHTML = mode === 'signup'
+      ? 'Already have one? <button class="linklike" data-mode="signin" type="button">Sign in</button>'
+      : 'New here? <button class="linklike" data-mode="signup" type="button">Create an account</button>';
+  };
+
+  // Both the tabs and the swap link carry data-mode, so one listener covers them.
+  gate.addEventListener('click', (ev) => {
+    const target = ev.target.closest('[data-mode]');
+    if (target) setMode(target.dataset.mode);
+  });
+
+  if (!auth.isConfigured()) {
+    say('Accounts are unavailable: this CodeFort has no Supabase project configured. ' +
+        'Set the SUP_URL and SUP_PB repository secrets and redeploy.', 'info');
+    submit.disabled = true;
+  }
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    quiet();
+
+    const email = emailEl.value.trim();
+    const password = passwordEl.value;
+
+    submit.disabled = true;
+    submit.textContent = mode === 'signup' ? 'Creating…' : 'Signing in…';
+
+    try {
+      if (mode === 'signup') {
+        const result = await auth.signUp(email, password);
+        if (!result.signedIn) {
+          say(`Account created. Check ${email} for a confirmation link, then sign in.`, 'ok');
+          setMode('signin');
+          return;
+        }
+      } else {
+        await auth.signIn(email, password);
+      }
+      enterStudio();
+    } catch (err) {
+      say(err.message);
+    } finally {
+      submit.disabled = !auth.isConfigured();
+      submit.textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+    }
+  });
+
+  $('#gate-forgot').addEventListener('click', async () => {
+    const email = emailEl.value.trim();
+    if (!email) {
+      say('Type your email above first, then press this.', 'info');
+      emailEl.focus();
+      return;
+    }
+    try {
+      await auth.requestPasswordReset(email);
+      say(`If ${email} has an account, a reset link is on its way.`, 'ok');
+    } catch (err) {
+      say(err.message);
+    }
+  });
+
+  function enterStudio() {
+    gate.hidden = true;
+    form.reset();
+    startStudio();
+  }
+
+  setMode('signup');
+  emailEl.focus();
+}
+
 /* ================================================================== studio */
 
 function startStudio() {
@@ -72,6 +184,7 @@ function startStudio() {
   const ui = new UI();
   const orch = new Orchestrator({
     getSettings,
+    getSession: () => auth.session,
     log: (text, cls) => ui.log(text, cls),
     onPublish: (info) => announcePublication(ui, info)
   });
@@ -140,11 +253,18 @@ function startStudio() {
 
   $('#task-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+
     const task = $('#task-input').value.trim();
-    if (!task) return;
+    if (!task) {
+      ui.hint('Describe what you want built first.');
+      $('#task-input').focus();
+      return;
+    }
 
     const settings = getSettings();
     if (!settings.mistralKey) {
+      ui.hint('No Mistral API key yet — add one to start.');
+      ui.log('cannot start: no Mistral API key configured', 'c-err');
       openSettings(ui, 'Add a Mistral API key to start a run.');
       return;
     }
@@ -243,6 +363,23 @@ function startStudio() {
     replayStream(ui);
   });
 
+  /* ------------------------------------------------------------- account */
+
+  $('#account').textContent = auth.email || 'signed in';
+  $('#account').title = `Signed in as ${auth.email || 'this account'}`;
+
+  $('#btn-signout').addEventListener('click', async () => {
+    if (orch.running && !confirm('A run is in progress. Sign out anyway?')) return;
+    orch.stop();
+    ui.setDirty(false);          // don't fight the unload warning on the way out
+    await auth.signOut();
+  });
+
+  // Covers both the sign-out button and a refresh token that stopped working.
+  auth.addEventListener('change', (ev) => {
+    if (!ev.detail.session) location.reload();
+  });
+
   /* ------------------------------------------------------------ settings */
 
   $('#btn-settings').addEventListener('click', () => openSettings(ui));
@@ -271,7 +408,7 @@ function startStudio() {
     const settings = getSettings();
     const result = $('#pub-result');
     result.hidden = true;
-    $('#pub-name').value = $('#pub-name').value || 'CodeFort';
+    $('#pub-name').value = $('#pub-name').value || auth.email || 'CodeFort';
     $('#pub-title').value = $('#pub-title').value || 'A CodeFort build';
 
     if (!supa.isConfigured(settings)) {
@@ -286,8 +423,9 @@ function startStudio() {
     try {
       const info = await supa.publish({
         settings: getSettings(),
+        session: auth.session,
         files: vfs.snapshot(),
-        name: $('#pub-name').value.trim() || 'CodeFort',
+        name: $('#pub-name').value.trim() || auth.email || 'CodeFort',
         title: $('#pub-title').value.trim(),
         description: $('#pub-desc').value.trim()
       });

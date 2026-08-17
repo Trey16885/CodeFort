@@ -46,10 +46,16 @@ export function isConfigured(settings) {
   return Boolean(settings.supabaseUrl && settings.supabaseKey);
 }
 
-function headers(settings, extra = {}) {
+/**
+ * `apikey` is always the publishable key — it identifies the project. The
+ * bearer token is what identifies the *caller*: a user's access token when we
+ * have one (so row-level security sees `auth.uid()`), the anon key otherwise
+ * for public reads.
+ */
+function headers(settings, { token, ...extra } = {}) {
   return {
     apikey: settings.supabaseKey,
-    Authorization: `Bearer ${settings.supabaseKey}`,
+    Authorization: `Bearer ${token || settings.supabaseKey}`,
     'Content-Type': 'application/json',
     ...extra
   };
@@ -70,12 +76,15 @@ async function readError(res) {
 }
 
 /**
- * Store the workspace under a fresh slug.
+ * Store the workspace under a fresh slug, owned by the signed-in account.
  * @returns {Promise<{slug: string, url: string}>}
  */
-export async function publish({ settings, files, name, title, description, entry = '/index.html' }) {
+export async function publish({ settings, session, files, name, title, description, entry = '/index.html' }) {
   if (!isConfigured(settings)) {
     throw new PublishError('Supabase is not configured — set SUP_URL and SUP_PB (or fill them in under Settings).');
+  }
+  if (!session?.access_token || !session.user?.id) {
+    throw new PublishError('Publishing needs an account. Sign in and try again.');
   }
   if (!files || !Object.keys(files).length) {
     throw new PublishError('nothing to publish: the workspace is empty');
@@ -83,7 +92,8 @@ export async function publish({ settings, files, name, title, description, entry
 
   const payload = {
     slug: makeSlug(),
-    name: (name || 'CodeFort').slice(0, 120),
+    user_id: session.user.id,
+    name: (name || session.user.email || 'CodeFort').slice(0, 120),
     title: (title || 'A CodeFort build').slice(0, 200),
     description: (description || '').slice(0, 500),
     entry,
@@ -92,7 +102,7 @@ export async function publish({ settings, files, name, title, description, entry
 
   const res = await fetch(`${restBase(settings)}/${TABLE}`, {
     method: 'POST',
-    headers: headers(settings, { Prefer: 'return=representation' }),
+    headers: headers(settings, { token: session.access_token, Prefer: 'return=representation' }),
     body: JSON.stringify(payload)
   });
 

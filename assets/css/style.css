@@ -375,6 +375,17 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .composer textarea:focus { border-color: var(--accent); }
 .composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
+#run-state.hint {
+  color: var(--warn);
+  font-weight: 600;
+  animation: nudge .3s ease-out;
+}
+@keyframes nudge {
+  0%, 100% { transform: none; }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
 /* ------------------------------ work panel ------------------------------ */
 
 .tabs { display: flex; background: var(--bg-2); border-bottom: 1px solid var(--line-soft); }
@@ -489,6 +500,110 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .note a { color: var(--accent); }
 
 .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 0; }
+
+/* ------------------------------ gate ------------------------------ */
+
+.gate {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(1100px 520px at 50% -10%, #17203a 0%, transparent 62%),
+    var(--bg);
+}
+
+.gate-card {
+  width: min(420px, 100%);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .45);
+}
+
+.gate-brand { font-size: 21px; font-weight: 700; letter-spacing: .3px; }
+.gate-brand span {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gate-lede { margin: -6px 0 0; color: var(--fg-dim); font-size: 13px; }
+
+.gate-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.gate-tab {
+  flex: 1;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 13px;
+}
+.gate-tab:hover { color: var(--fg); }
+.gate-tab.active { background: var(--bg-3); color: var(--fg); font-weight: 600; }
+
+#gate-form { display: flex; flex-direction: column; gap: 13px; }
+
+.gate-submit { justify-content: center; padding: 10px; }
+
+.gate-message {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  border: 1px solid #4a2530;
+  background: #2a1620;
+  color: #ffb4b4;
+}
+.gate-message.ok { border-color: #1e4433; background: #0f2419; color: var(--good); }
+.gate-message.info { border-color: var(--line); background: var(--bg-3); color: var(--fg-dim); }
+
+.gate-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  flex-wrap: wrap;
+}
+
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.linklike:hover { color: #9cc4ff; }
+
+.gate-note {
+  margin: 0;
+  padding-top: 13px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  line-height: 1.55;
+}
+
+#account { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ------------------------------ viewer ------------------------------ */
 

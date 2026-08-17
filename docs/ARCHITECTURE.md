@@ -4,14 +4,18 @@ CodeFort is a static site with no build step. `index.html` loads one generated
 config script and one ES module; everything else is imported from there. The
 whole thing runs in the tab.
 
-## Two modes, one page
+## Three modes, one page
 
-`main.js` looks at the URL first:
+`main.js` looks at the URL, then at the session:
 
-| URL | Mode |
+| URL / state | Mode |
 | --- | --- |
-| `/CodeFort/` | **Studio** — the agent workbench |
-| `/CodeFort/?=k7m2xq9d4npv` | **Viewer** — renders that published workspace |
+| `/CodeFort/?=k7m2xq9d4npv` | **Viewer** — renders that published workspace, no account |
+| `/CodeFort/`, signed out | **Gate** — create an account or sign in |
+| `/CodeFort/`, signed in | **Studio** — the agent workbench |
+
+The viewer is checked first and deliberately skips the gate. Publishing that
+produced a link only account holders could open would not be publishing.
 
 `?=slug` is a query string whose key is the empty string, which
 `URLSearchParams.get('')` reads directly. `?p=slug`, `?site=slug` and `#slug`
@@ -28,7 +32,6 @@ run(task)
     │       ├── build messages: [system charter, turn prompt]
     │       │      turn prompt = workspace tree
     │       │                  + recent shared stream (all three agents)
-    │       │                  + any nudge the orchestrator wants to add
     │       └── for step in 1..maxStepsPerTurn
     │           ├── POST /v1/chat/completions with the tool schemas
     │           ├── assistant text  -> shared stream as a thought
@@ -52,37 +55,26 @@ proceed from different beliefs about what has already been built.
 
 ### The done rule
 
-A run ends when **all three agents vote `done: true` in the same round, and
-nobody has changed the workspace since the earliest of those votes.**
+A run ends when **all three agents vote `done: true` in the same round.** A
+verdict from an earlier round does not carry forward — each agent re-votes on
+its own turn, every round, so the check always reflects what all three think
+right now.
 
-The second half matters. Without it, this sequence would end the run:
+One holdout keeps the run going. Nothing else stops it early; the round limit
+is the backstop.
 
-1. Architect votes done.
-2. Builder rewrites `index.html` and votes done.
-3. Scout votes done.
-
-The Architect approved a state that no longer exists. The orchestrator counts
-workspace mutations and stamps each verdict with the count at the time it was
-cast; if the earliest stamp is behind the current count, the votes are stale
-and the fort works another round. The agent whose vote went stale is told so in
-its next turn's nudge.
-
-### Nudges
-
-Small, deterministic steering the orchestrator adds to a turn prompt:
-
-- name any agent that is not satisfied, and quote its reason,
-- tell an agent when its done vote went stale,
-- point the Architect at `/PLAN.md` in round 1,
-- point the Builder at the missing `/index.html` from round 2 on.
-
-These are cheap rules, not another model call.
+Keeping agents honest about that vote is the charters' job, not the
+orchestrator's. Rule 8 in the shared rules tells each agent to vote done only
+after verifying, and the Scout's charter is explicitly to push back on a
+premature "done" — which works because the holdout's reason is in the shared
+stream the other two read on their next turn.
 
 ## Modules
 
 | Module | Responsibility |
 | --- | --- |
 | `main.js` | Mode selection, DOM wiring, dialogs |
+| `auth.js` | Accounts, session storage, token refresh |
 | `orchestrator.js` | Rounds, turns, tool loop, consensus, abort |
 | `agents.js` | The three roles, charters, shared rules, prompt assembly |
 | `thoughts.js` | The shared stream and its prompt rendering |
@@ -102,8 +94,7 @@ Only `main.js` and `ui.js` touch the DOM, which is why `vfs.js`, `shell.js` and
 
 A flat `Map` of absolute path to node. Directories are stored explicitly, so an
 empty folder is a real thing an agent can create. Mutations dispatch a `change`
-event, which the UI listens to for the tree, editor and preview, and which the
-orchestrator counts for the staleness rule.
+event, which the UI listens to for the tree, editor and preview.
 
 The workspace is mirrored into `localStorage` on every change, so a reload
 picks up where the fort left off.
@@ -140,12 +131,37 @@ per session) and is reused after. Around each run:
 Set `window.__CODEFORT_PYODIDE_URL__` before the modules load to self-host the
 runtime instead of using the CDN.
 
+## Accounts
+
+Supabase Auth (GoTrue) over plain fetch — `/auth/v1/signup`, `/token`,
+`/logout`, `/recover`. No SDK, in keeping with the rest.
+
+The session — access token, refresh token, absolute expiry, user id and email —
+lives in `localStorage` under `codefort.session.v1`. On boot, `Auth.restore()`
+either finds a live session, silently refreshes an expired one, or gives up and
+hands over to the gate. While the studio is open a timer refreshes the token a
+minute before it expires.
+
+Sign-out and a refresh that stops working are the same event: the session goes
+to `null`, `Auth` dispatches `change`, and `main.js` reloads the page back to
+the gate. That is why the gate's listeners are only ever attached once.
+
+GoTrue returns a session at the top level for `/token` but nested under
+`session` in some signup responses, and returns *no* session at all when the
+project requires email confirmation. `toSession()` normalises all three, and a
+null result is what tells the gate to say "check your inbox" instead of
+dropping the user into the studio.
+
 ## Publishing
 
-`publish_site` writes one row: `{slug, name, title, description, entry, files}`,
-where `files` is the workspace snapshot as `{path: content}`. The slug is 12
-random characters from a 33-character alphabet with the ambiguous glyphs
-removed.
+`publish_site` writes one row: `{slug, user_id, name, title, description,
+entry, files}`, where `files` is the workspace snapshot as `{path: content}`.
+The slug is 12 random characters from a 33-character alphabet with the
+ambiguous glyphs removed.
+
+The insert is authenticated with the user's access token rather than the anon
+key, so row-level security sees a real `auth.uid()` and can require that a row's
+`user_id` matches the account writing it. Reads stay anonymous.
 
 The viewer fetches the row and calls `bundleToHtml()`, which folds the whole
 workspace into a single document:

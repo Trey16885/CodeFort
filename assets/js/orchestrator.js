@@ -7,9 +7,7 @@
  * next prompt is rebuilt from that bus — so the three models are reading one
  * another rather than working in parallel silos.
  *
- * The run stops when all three vote done in the same round *and* nobody has
- * touched the workspace since the first of those votes. A vote cast before
- * someone else changed a file is stale and does not count.
+ * The run stops when all three vote done in the same round.
  */
 
 import { AGENTS, modelFor, systemPromptFor, turnPromptFor } from './agents.js';
@@ -18,21 +16,14 @@ import { chat, usage } from './mistral.js';
 import { TOOL_DEFS, Toolbox } from './tools.js';
 import { vfs } from './vfs.js';
 
-const MUTATIONS = new Set(['create', 'write', 'mkdir', 'delete', 'move', 'restore', 'clear']);
-
 export class Orchestrator extends EventTarget {
-  constructor({ getSettings, log, onPublish }) {
+  constructor({ getSettings, getSession, log, onPublish }) {
     super();
     this.getSettings = getSettings;
-    this.toolbox = new Toolbox({ getSettings, log, onPublish });
+    this.toolbox = new Toolbox({ getSettings, getSession, log, onPublish });
     this.running = false;
     this.controller = null;
     this.round = 0;
-    this.mutations = 0;
-
-    vfs.addEventListener('change', (e) => {
-      if (MUTATIONS.has(e.detail?.action)) this.mutations++;
-    });
   }
 
   stop() {
@@ -60,7 +51,7 @@ export class Orchestrator extends EventTarget {
 
     const signal = this.controller.signal;
     const systems = new Map(AGENTS.map((a) => [a.id, systemPromptFor(a, { task, settings })]));
-    /** @type {Map<string, {round:number, done:boolean, reason:string, mutations:number}>} */
+    /** @type {Map<string, {round:number, done:boolean, reason:string, summary:string}>} */
     const verdicts = new Map();
 
     this.#say({ kind: KIND.TASK, who: 'You', text: task });
@@ -78,7 +69,7 @@ export class Orchestrator extends EventTarget {
           if (signal.aborted) throw new DOMException('aborted', 'AbortError');
 
           this.#emit('turn', { agent, round });
-          const verdict = await this.#takeTurn({ agent, round, task, settings, systems, verdicts, signal });
+          const verdict = await this.#takeTurn({ agent, round, settings, systems, signal });
           verdicts.set(agent.id, verdict);
           this.#emit('verdict', { agent, ...verdict });
         }
@@ -123,17 +114,14 @@ export class Orchestrator extends EventTarget {
     return { outcome, rounds: this.round, published: this.toolbox.published };
   }
 
-  /** All agents voted done this round, and nothing changed after the first vote. */
+  /** Every agent voted done in this round. */
   #consensus(verdicts, round) {
     if (verdicts.size < AGENTS.length) return false;
-    const all = [...verdicts.values()];
-    if (!all.every((v) => v.round === round && v.done)) return false;
-    const earliest = Math.min(...all.map((v) => v.mutations));
-    return earliest === this.mutations;
+    return [...verdicts.values()].every((v) => v.round === round && v.done);
   }
 
   /** One agent's turn: up to maxSteps tool calls, ending in end_turn. */
-  async #takeTurn({ agent, round, task, settings, systems, verdicts, signal }) {
+  async #takeTurn({ agent, round, settings, systems, signal }) {
     const model = modelFor(agent, settings);
 
     const messages = [
@@ -144,19 +132,12 @@ export class Orchestrator extends EventTarget {
           round,
           maxRounds: settings.maxRounds,
           tree: vfs.tree(),
-          transcript: bus.transcriptFor(agent.id),
-          nudge: this.#nudgeFor(agent, verdicts, round)
+          transcript: bus.transcriptFor(agent.id)
         })
       }
     ];
 
-    let verdict = {
-      round,
-      done: false,
-      reason: 'turn ended without a verdict',
-      summary: '',
-      mutations: this.mutations
-    };
+    let verdict = { round, done: false, reason: 'turn ended without a verdict', summary: '' };
     let sawEndTurn = false;
 
     for (let step = 1; step <= settings.maxStepsPerTurn && !sawEndTurn; step++) {
@@ -226,8 +207,7 @@ export class Orchestrator extends EventTarget {
             round,
             done: result.control.done,
             reason: result.control.reason,
-            summary: result.control.summary,
-            mutations: this.mutations
+            summary: result.control.summary
           };
           this.#say({
             kind: KIND.VERDICT, agent: agent.id, who: agent.name, model, round,
@@ -239,37 +219,11 @@ export class Orchestrator extends EventTarget {
     }
 
     if (!sawEndTurn) {
-      verdict.mutations = this.mutations;
       this.#say({
         kind: KIND.VERDICT, agent: agent.id, who: agent.name, model, round,
         text: 'NOT DONE — ran out of tool steps before calling end_turn'
       });
     }
     return verdict;
-  }
-
-  /** Per-turn steering so agents don't stall or all vote done reflexively. */
-  #nudgeFor(agent, verdicts, round) {
-    const notes = [];
-
-    const holdouts = AGENTS.filter((a) => a.id !== agent.id && verdicts.get(a.id) && !verdicts.get(a.id).done);
-    for (const h of holdouts) {
-      notes.push(`${h.name} is not satisfied yet: "${verdicts.get(h.id).reason}". Resolve that before voting done.`);
-    }
-
-    const mine = verdicts.get(agent.id);
-    if (mine?.done && this.mutations > mine.mutations) {
-      notes.push('The workspace changed after your last done vote — re-check it before voting done again.');
-    }
-
-    if (round === 1 && agent.id === 'architect') {
-      notes.push('Nothing exists yet. Write /PLAN.md first, then start the scaffold.');
-    }
-
-    if (!vfs.exists('/index.html') && round >= 2 && agent.id === 'builder') {
-      notes.push('There is still no /index.html. If this task produces a site, that file is the entry point.');
-    }
-
-    return notes.join(' ');
   }
 }
