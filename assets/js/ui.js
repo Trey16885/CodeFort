@@ -287,7 +287,20 @@ export class UI {
 
   /* ------------------------------------------------------------- status */
 
+  /** Say why a click did nothing, in the one spot next to the button. */
+  hint(message) {
+    clearTimeout(this._hintTimer);
+    this.el.runState.textContent = message;
+    this.el.runState.classList.add('hint');
+    this._hintTimer = setTimeout(() => {
+      this.el.runState.classList.remove('hint');
+      this.el.runState.textContent = 'idle';
+    }, 4000);
+  }
+
   setRunning(running) {
+    clearTimeout(this._hintTimer);
+    this.el.runState.classList.remove('hint');
     this.el.run.disabled = running;
     this.el.stop.disabled = !running;
     this.el.run.textContent = running ? 'Working…' : 'Start the fort';

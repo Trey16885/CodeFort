@@ -140,11 +140,18 @@ function startStudio() {
 
   $('#task-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+
     const task = $('#task-input').value.trim();
-    if (!task) return;
+    if (!task) {
+      ui.hint('Describe what you want built first.');
+      $('#task-input').focus();
+      return;
+    }
 
     const settings = getSettings();
     if (!settings.mistralKey) {
+      ui.hint('No Mistral API key yet — add one to start.');
+      ui.log('cannot start: no Mistral API key configured', 'c-err');
       openSettings(ui, 'Add a Mistral API key to start a run.');
       return;
     }
