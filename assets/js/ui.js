@@ -84,9 +84,10 @@ export class UI {
       row.setAttribute('aria-selected', String(task.id === activeId));
       row.title = task.brief || task.name;
 
+      const live = (task.publications || []).length;
       row.innerHTML =
         `<span class="task-name"></span>` +
-        (task.published ? '<span class="task-pub" title="Published">●</span>' : '') +
+        (live ? `<span class="task-pub" title="${live} live site${live === 1 ? '' : 's'}">●</span>` : '') +
         `<span class="task-meta">${fileCount}</span>`;
       row.querySelector('.task-name').textContent = task.name;
 

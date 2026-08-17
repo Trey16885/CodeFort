@@ -34,6 +34,8 @@ Every time Mistral updates, CodeFort is already updated — the `-latest` aliase
 
   That link renders the built site for anyone who opens it, with the publisher's name on it. You can also publish by hand from the **Publish** button.
 
+- **Unpublish.** The Publish dialog lists every site the current task has live, and takes any of them down. A task can be published more than once, so each publication is tracked and removable on its own. Only the account that published a site can remove it — enforced by row-level security, not by hiding the button.
+
 ## Setup
 
 CodeFort is a static site. It reads three repository secrets, injected at deploy time by [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):

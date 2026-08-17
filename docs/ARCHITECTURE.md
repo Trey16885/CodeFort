@@ -193,6 +193,24 @@ The insert is authenticated with the user's access token rather than the anon
 key, so row-level security sees a real `auth.uid()` and can require that a row's
 `user_id` matches the account writing it. Reads stay anonymous.
 
+### Unpublishing
+
+`unpublish()` sends `DELETE /rest/v1/publications?slug=eq.<slug>` with the same
+user token. The policy is `user_id = auth.uid()`, so someone else's row matches
+nothing and comes back as an empty array rather than an error — which is
+indistinguishable from a row that was already deleted. Both cases return
+`removed: false`, and the UI says "already gone from the server" instead of
+claiming a take-down it did not perform.
+
+Each publish mints a fresh slug, so one task can own several live sites. Tasks
+keep the whole list rather than only the newest, because otherwise every
+publication but the last would be unreachable and impossible to take down.
+The slug is format-checked before the request so a malformed one never reaches
+the network.
+
+Unpublishing is a human action only — there is no agent tool for it. The models
+can put work up; taking it down is the account holder's call.
+
 The viewer fetches the row and calls `bundleToHtml()`, which folds the whole
 workspace into a single document:
 

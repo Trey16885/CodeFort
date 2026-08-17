@@ -110,7 +110,42 @@ export async function publish({ settings, session, files, name, title, descripti
 
   const rows = await res.json().catch(() => []);
   const slug = rows[0]?.slug || payload.slug;
-  return { slug, url: publicUrlFor(slug) };
+
+  // Return the name and title too: they are what distinguishes one publication
+  // of a task from another in the take-down list.
+  return { slug, url: publicUrlFor(slug), name: payload.name, title: payload.title };
+}
+
+/**
+ * Take a published site down.
+ *
+ * The delete policy is `user_id = auth.uid()`, so a row belonging to someone
+ * else simply matches nothing rather than erroring — which is indistinguishable
+ * from a row that was already deleted. `removed` reports which happened so the
+ * caller can say something true rather than claiming a success it didn't get.
+ *
+ * @returns {Promise<{slug: string, removed: boolean}>}
+ */
+export async function unpublish({ settings, session, slug }) {
+  if (!isConfigured(settings)) {
+    throw new PublishError('Supabase is not configured — set the SUP_URL and SUP_PB repository secrets and redeploy.');
+  }
+  if (!session?.access_token) {
+    throw new PublishError('Unpublishing needs an account. Sign in and try again.');
+  }
+  if (!/^[A-Za-z0-9_-]{4,64}$/.test(String(slug || ''))) {
+    throw new PublishError(`"${slug}" is not a valid publication id`);
+  }
+
+  const res = await fetch(`${restBase(settings)}/${TABLE}?slug=eq.${encodeURIComponent(slug)}`, {
+    method: 'DELETE',
+    headers: headers(settings, { token: session.access_token, Prefer: 'return=representation' })
+  });
+
+  if (!res.ok) throw new PublishError(`unpublish failed: ${await readError(res)}`);
+
+  const rows = await res.json().catch(() => []);
+  return { slug, removed: Array.isArray(rows) && rows.length > 0 };
 }
 
 /** Fetch a publication by slug. */
