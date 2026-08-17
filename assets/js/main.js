@@ -500,88 +500,138 @@ function startStudio() {
       result.hidden = false;
       result.textContent = 'Supabase is not configured. Set the SUP_URL and SUP_PB repository secrets and redeploy.';
     }
+    // Publishing again mints a new slug rather than overwriting, so without
+    // this the task quietly accumulates duplicate live sites.
+    const live = tasks.publications();
+    $('#pub-replace-wrap').hidden = live.length === 0;
+    $('#pub-replace-label').textContent = live.length === 1
+      ? 'This task already has a live site. Take it down once the new one is up.'
+      : `This task already has ${live.length} live sites. Take them down once the new one is up.`;
+
     renderLivePublications();
     $('#dlg-publish').showModal();
   });
 
+  /**
+   * One row: the link, a subtitle, and a take-down button.
+   * Shared by the per-task list and the account-wide "My sites" list.
+   */
+  function publicationRow(entry, onError) {
+    const li = document.createElement('li');
+
+    const meta = document.createElement('div');
+    meta.className = 'pub-meta';
+
+    const link = document.createElement('a');
+    link.className = 'pub-url';
+    link.href = entry.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = entry.url;
+
+    const when = document.createElement('span');
+    when.className = 'pub-when';
+    const stamp = entry.at || entry.created_at;
+    when.textContent = [entry.title, stamp ? new Date(stamp).toLocaleString() : null]
+      .filter(Boolean).join(' · ');
+
+    meta.append(link, when);
+
+    const kill = document.createElement('button');
+    kill.type = 'button';
+    kill.className = 'btn danger sm';
+    kill.textContent = 'Unpublish';
+
+    kill.addEventListener('click', async () => {
+      if (!confirm(`Take down ${entry.url}?\n\nThe link stops working for everyone. This cannot be undone.`)) return;
+
+      kill.disabled = true;
+      li.classList.add('going');
+      kill.textContent = 'Taking down…';
+
+      try {
+        const { removed } = await supa.unpublish({
+          settings: getSettings(),
+          session: auth.session,
+          slug: entry.slug
+        });
+
+        tasks.removePublication(entry.slug);
+        li.classList.remove('going');
+        li.classList.add('gone');
+        kill.remove();
+        when.textContent = removed
+          ? 'taken down'
+          : 'already gone from the server — removed from this list';
+        ui.log(`unpublished ${entry.url}${removed ? '' : ' (was already gone)'}`, 'c-ok');
+        bus.post({ who: 'CodeFort', text: `Unpublished ${entry.url}` });
+      } catch (err) {
+        li.classList.remove('going');
+        kill.disabled = false;
+        kill.textContent = 'Unpublish';
+        onError?.(err);
+        ui.log(err.message, 'c-err');
+      }
+    });
+
+    li.append(meta, kill);
+    return li;
+  }
+
   /** The list of this task's live sites, each with a way to take it down. */
   function renderLivePublications() {
     const list = $('#pub-live');
-    const wrap = $('#pub-live-wrap');
     const entries = tasks.publications();
 
-    wrap.hidden = entries.length === 0;
+    $('#pub-live-wrap').hidden = entries.length === 0;
     list.innerHTML = '';
 
     for (const entry of entries) {
-      const li = document.createElement('li');
-
-      const meta = document.createElement('div');
-      meta.className = 'pub-meta';
-
-      const link = document.createElement('a');
-      link.className = 'pub-url';
-      link.href = entry.url;
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = entry.url;
-
-      const when = document.createElement('span');
-      when.className = 'pub-when';
-      when.textContent = [entry.title, entry.at ? new Date(entry.at).toLocaleString() : null]
-        .filter(Boolean).join(' · ');
-
-      meta.append(link, when);
-
-      const kill = document.createElement('button');
-      kill.type = 'button';
-      kill.className = 'btn danger sm';
-      kill.textContent = 'Unpublish';
-
-      kill.addEventListener('click', async () => {
-        if (!confirm(`Take down ${entry.url}?\n\nThe link stops working for everyone. This cannot be undone.`)) return;
-
-        kill.disabled = true;
-        li.classList.add('going');
-        kill.textContent = 'Taking down…';
-
-        try {
-          const { removed } = await supa.unpublish({
-            settings: getSettings(),
-            session: auth.session,
-            slug: entry.slug
-          });
-
-          tasks.removePublication(entry.slug);
-          li.classList.remove('going');
-          li.classList.add('gone');
-          kill.remove();
-          when.textContent = removed
-            ? 'taken down'
-            : 'already gone from the server — removed from this list';
-          ui.log(`unpublished ${entry.url}${removed ? '' : ' (was already gone)'}`, 'c-ok');
-          bus.post({ who: 'CodeFort', text: `Unpublished ${entry.url}` });
-
-          // Drop the row once the list is next drawn.
-          setTimeout(() => { if (!$('#dlg-publish').open) renderLivePublications(); }, 0);
-        } catch (err) {
-          li.classList.remove('going');
-          kill.disabled = false;
-          kill.textContent = 'Unpublish';
-          const result = $('#pub-result');
-          result.hidden = false;
-          result.textContent = err.message;
-          ui.log(err.message, 'c-err');
-        }
-      });
-
-      li.append(meta, kill);
-      list.appendChild(li);
+      list.appendChild(publicationRow(entry, (err) => {
+        const result = $('#pub-result');
+        result.hidden = false;
+        result.textContent = err.message;
+      }));
     }
   }
 
+  /* -------------------------------------------------------------- my sites */
+
+  $('#btn-sites').addEventListener('click', async () => {
+    const list = $('#sites-list');
+    const status = $('#sites-status');
+    list.innerHTML = '';
+    status.hidden = false;
+    status.textContent = 'Loading…';
+    $('#dlg-sites').showModal();
+
+    try {
+      const rows = await supa.listPublications({ settings: getSettings(), session: auth.session });
+      if (!rows.length) {
+        status.textContent = 'Nothing published yet.';
+        return;
+      }
+      status.hidden = true;
+      for (const row of rows) {
+        list.appendChild(publicationRow(row, (err) => {
+          status.hidden = false;
+          status.textContent = err.message;
+        }));
+      }
+    } catch (err) {
+      status.textContent = err.message;
+      ui.log(err.message, 'c-err');
+    }
+  });
+
   $('#dlg-publish').addEventListener('close', async (ev) => {
     if (ev.target.returnValue !== 'publish') return;
+
+    // Snapshot before publishing: these are the ones being replaced.
+    const replacing = $('#pub-replace').checked && !$('#pub-replace-wrap').hidden
+      ? tasks.publications()
+      : [];
+
     try {
       const info = await supa.publish({
         settings: getSettings(),
@@ -592,6 +642,18 @@ function startStudio() {
         description: $('#pub-desc').value.trim()
       });
       announcePublication(ui, info);
+
+      // Only after the new one is confirmed up — a failed publish must not
+      // leave the task with nothing live.
+      for (const old of replacing) {
+        try {
+          await supa.unpublish({ settings: getSettings(), session: auth.session, slug: old.slug });
+          tasks.removePublication(old.slug);
+          ui.log(`replaced: took down ${old.url}`, 'c-ok');
+        } catch (err) {
+          ui.log(`could not take down ${old.url}: ${err.message}`, 'c-err');
+        }
+      }
     } catch (err) {
       ui.log(err.message, 'c-err');
       alert(err.message);

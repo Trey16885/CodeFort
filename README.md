@@ -34,7 +34,7 @@ Every time Mistral updates, CodeFort is already updated — the `-latest` aliase
 
   That link renders the built site for anyone who opens it, with the publisher's name on it. You can also publish by hand from the **Publish** button.
 
-- **Unpublish.** The Publish dialog lists every site the current task has live, and takes any of them down. A task can be published more than once, so each publication is tracked and removable on its own. Only the account that published a site can remove it — enforced by row-level security, not by hiding the button.
+- **Unpublish, and see everything you have live.** The Publish dialog lists the current task's live sites; **My sites** lists everything under your account straight from the database, including anything published from another browser or from a task you have since deleted. Publishing a task that already has a live site offers to replace it rather than quietly stacking duplicates. A task can be published more than once, so each publication is tracked and removable on its own. Only the account that published a site can remove it — enforced by row-level security, not by hiding the button.
 
 ## Setup
 

@@ -657,6 +657,38 @@ await testAsync('deleting nothing reports removed:false rather than claiming suc
   }
 });
 
+await testAsync('listing my sites is scoped to my account and skips the files blob', async () => {
+  const { listPublications } = await import('../assets/js/supabase.js');
+  let seen = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify([{ slug: 'abc123', title: 'T', created_at: '2026-01-01' }]), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    });
+  };
+  try {
+    const rows = await listPublications({ settings: CONFIGURED(), session: SESSION });
+    assert.equal(rows.length, 1);
+    assert.match(rows[0].url, /\?=abc123$/, 'a usable link is derived from the slug');
+
+    const query = decodeURIComponent(seen.url);
+    assert.match(query, /user_id=eq\.uid-1/, 'scoped to this account');
+    assert.ok(!/files/.test(query), 'must not select the workspace blob');
+    assert.equal(seen.init.headers.Authorization, 'Bearer tok');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('listing refuses without a session', async () => {
+  const { listPublications } = await import('../assets/js/supabase.js');
+  await assert.rejects(
+    () => listPublications({ settings: CONFIGURED(), session: null }),
+    /Sign in to see your published sites/
+  );
+});
+
 test('PostgREST errors name the fix, not just the symptom', async () => {
   const { friendlyRestError } = await import('../assets/js/supabase.js');
 

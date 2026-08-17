@@ -159,7 +159,16 @@ code { font-family: var(--mono); font-size: 0.92em; }
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
+/* Six controls in a row is wider than a phone. Let them wrap rather than
+   pushing the whole document sideways. */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
 
 .grid {
   flex: 1;
@@ -557,6 +566,19 @@ code { font-family: var(--mono); font-size: 0.92em; }
 
 .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 0; padding: 0; }
 
+.chk-block {
+  font-size: 12.5px;
+  color: var(--fg);
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  line-height: 1.45;
+}
+.chk-block input { margin-top: 2px; flex: none; }
+
 .pub-live-head {
   margin: 0 0 7px;
   font-size: 11px;
@@ -748,5 +770,15 @@ code { font-family: var(--mono); font-size: 0.92em; }
   .panel.files  { grid-column: 1; grid-row: 1; }
   .panel.work   { grid-column: 1; grid-row: 2; }
   .panel.stream { grid-column: 1; grid-row: 3; }
+
+  .topbar { gap: 8px; padding: 8px 10px; }
   .roster { order: 3; width: 100%; }
+
+  /* Give the controls their own full-width row instead of squeezing them
+     alongside the brand, and trim them so they fit in one line. */
+  .topbar-actions { order: 2; width: 100%; justify-content: flex-start; }
+  .topbar-actions .btn { padding: 6px 10px; font-size: 13px; }
+  #account { max-width: 100%; }
+
+  .statusbar { gap: 10px; }
 }

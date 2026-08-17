@@ -29,7 +29,8 @@ export function makeSlug(length = SLUG_LENGTH) {
 }
 
 /** The slug in the current URL, supporting `?=slug`, `?p=slug` and `#slug`. */
-export function slugFromLocation(loc = window.location) {
+export function slugFromLocation(loc = globalThis.location) {
+  if (!loc) return null;
   const params = new URLSearchParams(loc.search);
   const bare = params.get('');            // the `?=randomstring` form
   const named = params.get('p') || params.get('site') || params.get('id');
@@ -38,8 +39,13 @@ export function slugFromLocation(loc = window.location) {
   return /^[A-Za-z0-9_-]{4,64}$/.test(raw) ? raw : null;
 }
 
-export function publicUrlFor(slug, loc = window.location) {
-  return `${loc.origin}${loc.pathname}?=${slug}`;
+/**
+ * The public link for a slug. Falls back to a relative URL when there is no
+ * `location` — this module is deliberately DOM-free so it can be tested under
+ * plain Node, and a relative `?=slug` still resolves correctly in a browser.
+ */
+export function publicUrlFor(slug, loc = globalThis.location) {
+  return loc ? `${loc.origin}${loc.pathname}?=${slug}` : `?=${slug}`;
 }
 
 export function isConfigured(settings) {
@@ -148,6 +154,37 @@ export async function publish({ settings, session, files, name, title, descripti
   // Return the name and title too: they are what distinguishes one publication
   // of a task from another in the take-down list.
   return { slug, url: publicUrlFor(slug), name: payload.name, title: payload.title };
+}
+
+/**
+ * Every site this account has live, newest first.
+ *
+ * `files` is deliberately excluded from the select: it holds an entire
+ * workspace per row, and a listing has no use for it.
+ *
+ * @returns {Promise<Array<object>>}
+ */
+export async function listPublications({ settings, session }) {
+  if (!isConfigured(settings)) {
+    throw new PublishError('Supabase is not configured — set the SUP_URL and SUP_PB repository secrets and redeploy.');
+  }
+  if (!session?.access_token || !session.user?.id) {
+    throw new PublishError('Sign in to see your published sites.');
+  }
+
+  const query = new URLSearchParams({
+    user_id: `eq.${session.user.id}`,
+    select: 'slug,name,title,description,entry,created_at',
+    order: 'created_at.desc'
+  });
+
+  const res = await fetch(`${restBase(settings)}/${TABLE}?${query}`, {
+    headers: headers(settings, { token: session.access_token })
+  });
+  if (!res.ok) throw new PublishError(`could not list your sites: ${await readError(res)}`);
+
+  const rows = await res.json().catch(() => []);
+  return rows.map((r) => ({ ...r, url: publicUrlFor(r.slug) }));
 }
 
 /**
