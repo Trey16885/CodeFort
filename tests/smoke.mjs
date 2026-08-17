@@ -657,7 +657,43 @@ await testAsync('deleting nothing reports removed:false rather than claiming suc
   }
 });
 
-await testAsync('a server error surfaces as a PublishError', async () => {
+test('PostgREST errors name the fix, not just the symptom', async () => {
+  const { friendlyRestError } = await import('../assets/js/supabase.js');
+
+  // The exact shape PostgREST returns when the schema was never applied.
+  assert.match(
+    friendlyRestError({
+      code: 'PGRST205',
+      message: "Could not find the table 'public.publications' in the schema cache"
+    }, 404),
+    /run supabase\/schema\.sql/
+  );
+  assert.match(friendlyRestError({ code: 'PGRST106' }, 406), /public. schema is not exposed/);
+  assert.match(friendlyRestError({ code: '42501' }, 403), /row-level security/);
+  assert.match(friendlyRestError({}, 403), /row-level security/);
+  assert.match(friendlyRestError({ code: '23505' }, 409), /already taken/);
+  assert.match(friendlyRestError({ message: 'something odd' }, 500), /something odd/);
+  assert.match(friendlyRestError({}, 500), /HTTP 500/);
+});
+
+await testAsync('a publish against a missing table explains itself', async () => {
+  const { publish } = await import('../assets/js/supabase.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    code: 'PGRST205',
+    message: "Could not find the table 'public.publications' in the schema cache"
+  }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+  try {
+    await assert.rejects(
+      () => publish({ settings: CONFIGURED(), session: SESSION, files: { '/a.html': 'x' }, name: 'me' }),
+      /run supabase\/schema\.sql/
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('a refused delete points at the RLS policies', async () => {
   const { unpublish } = await import('../assets/js/supabase.js');
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ message: 'permission denied' }), {
@@ -666,7 +702,23 @@ await testAsync('a server error surfaces as a PublishError', async () => {
   try {
     await assert.rejects(
       () => unpublish({ settings: CONFIGURED(), session: SESSION, slug: 'abc123' }),
-      /unpublish failed: permission denied/
+      /unpublish failed: .*row-level security/
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+await testAsync('an unrecognised server error passes its message through', async () => {
+  const { unpublish } = await import('../assets/js/supabase.js');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ message: 'deadlock detected' }), {
+    status: 500, headers: { 'Content-Type': 'application/json' }
+  });
+  try {
+    await assert.rejects(
+      () => unpublish({ settings: CONFIGURED(), session: SESSION, slug: 'abc123' }),
+      /unpublish failed: deadlock detected/
     );
   } finally {
     globalThis.fetch = realFetch;

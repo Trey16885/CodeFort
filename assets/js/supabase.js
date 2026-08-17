@@ -65,11 +65,45 @@ function restBase(settings) {
   return settings.supabaseUrl.replace(/\/+$/, '') + '/rest/v1';
 }
 
+/**
+ * Turn a PostgREST error into something with a next step in it.
+ *
+ * The raw messages are accurate but assume you know PostgREST: "Could not find
+ * the table 'public.publications' in the schema cache" is what you get when the
+ * schema was never applied, and it does not mention the file that would fix it.
+ */
+export function friendlyRestError(data, status) {
+  const code = data?.code || '';
+  const raw = String(data?.message || data?.hint || data?.error_description || '').trim();
+
+  // PGRST205: table missing. PGRST106: schema not exposed.
+  if (code === 'PGRST205' || /schema cache/i.test(raw)) {
+    return 'this deployment\'s database has no "publications" table yet — ' +
+           'run supabase/schema.sql in the Supabase SQL editor, then try again';
+  }
+  if (code === 'PGRST106') {
+    return 'the "public" schema is not exposed through the Supabase API — ' +
+           'enable it under Project Settings → API';
+  }
+  // 42501 is Postgres "insufficient privilege"; RLS refusals surface as 401/403.
+  if (code === '42501' || status === 401 || status === 403) {
+    return 'the database refused that — check you are signed in, and that the ' +
+           'row-level security policies from supabase/schema.sql are applied';
+  }
+  if (code === '23505') {
+    return 'that publication id is already taken — try again';
+  }
+  if (status === 404) {
+    return 'the Supabase REST endpoint was not found — check SUP_URL points at the right project';
+  }
+
+  return raw || `HTTP ${status}`;
+}
+
 async function readError(res) {
   const text = await res.text().catch(() => '');
   try {
-    const j = JSON.parse(text);
-    return j.message || j.hint || j.error_description || text;
+    return friendlyRestError(JSON.parse(text), res.status);
   } catch {
     return text || `HTTP ${res.status}`;
   }
