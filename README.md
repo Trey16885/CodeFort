@@ -52,7 +52,7 @@ CodeFort is a static site. It reads three repository secrets, injected at deploy
 4. Set **Settings → Pages → Source** to **GitHub Actions**.
 5. Push to `main`. The workflow syntax-checks every module, writes `assets/js/config.generated.js` from the secrets, and deploys.
 
-Without `SUP_URL` and `SUP_PB` there are no accounts, so the studio cannot be opened — the sign-in screen says exactly that instead of failing quietly.
+`SUP_URL` and `SUP_PB` are optional: the project URL and publishable key are built into `assets/js/config.js`, since both are public by design and row-level security is what guards the data. Set the secrets only to point a fork at a different Supabase project.
 
 Visitors can override the baked-in Mistral key with their own under **Settings** — stored in their browser only. That is the only credential Settings offers; the agent lineup and the Supabase project come from the deployment.
 

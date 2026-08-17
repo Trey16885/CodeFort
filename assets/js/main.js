@@ -691,6 +691,11 @@ function openSettings(ui, message) {
   const s = getSettings();
   $('#set-key').value = credentialSource('mistralKey') === 'browser' ? s.mistralKey : '';
 
+  $('#set-account').innerHTML =
+    `<dt>Email</dt><dd>${escapeHtml(auth.email || 'not signed in')}</dd>` +
+    `<dt>Owner ID</dt><dd class="pick">${escapeHtml(auth.user?.id || '—')}</dd>` +
+    `<dt>Database</dt><dd>${escapeHtml(hostOf(s.supabaseUrl))}</dd>`;
+
   // The lineup is shown, not offered — it is what CodeFort is.
   $('#set-models').innerHTML = AGENTS.map((a) =>
     `<dt>${escapeHtml(a.name)}</dt><dd>${escapeHtml(s.models[a.modelKey])}</dd>`
@@ -777,4 +782,13 @@ function clampFloat(v, lo, hi, fallback) {
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/** Just the host, so the Settings row stays readable on a phone. */
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url || 'not configured';
+  }
 }
